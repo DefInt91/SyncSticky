@@ -13,50 +13,165 @@
       background-repeat: no-repeat;
       background-attachment: fixed;
       margin: 0;
-      height: 100vh;
+      min-height: 100vh;
       overflow: hidden;
       transition: background 0.5s ease;
+      font-family: Arial, sans-serif;
     }
 
-    #fab-add {
-      position: fixed;
-      bottom: 20px;
-      right: 20px;
-      width: 60px;
-      height: 60px;
+    #dashboard-shell {
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 16px;
+      box-sizing: border-box;
+    }
+
+    #dashboard-toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      flex-shrink: 0;
+    }
+
+    #dashboard-title {
+      margin: 0;
+      color: #222;
+      font-size: 22px;
+      line-height: 1.2;
+    }
+
+    .toolbar-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .toolbar-btn {
+      border: none;
+      border-radius: 6px;
+      padding: 9px 12px;
+      cursor: pointer;
+      font-weight: bold;
       background: #333;
       color: white;
-      border-radius: 50%;
-      text-align: center;
-      line-height: 55px;
-      font-size: 30px;
-      cursor: pointer;
-      box-shadow: 0 4px 10px rgba(0,0,0,0.3);
-      user-select: none;
-      z-index: 1000;
-      transition: transform 0.2s;
     }
-    #fab-add:hover { transform: scale(1.1); background: #555; }
 
-    #fab-settings {
-      position: fixed;
-      bottom: 90px;
-      right: 25px;
-      width: 50px;
-      height: 50px;
+    .toolbar-btn.secondary {
       background: white;
       color: #333;
-      border-radius: 50%;
-      text-align: center;
-      line-height: 50px;
-      font-size: 24px;
-      cursor: pointer;
-      box-shadow: 0 4px 10px rgba(0,0,0,0.2);
-      user-select: none;
-      z-index: 1000;
-      transition: transform 0.2s;
+      border: 1px solid #ccc;
     }
-    #fab-settings:hover { transform: scale(1.1); background: #eee; }
+
+    #todo-board {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      min-height: 0;
+      flex-grow: 1;
+    }
+
+    .todo-column {
+      background: rgba(255,255,255,0.88);
+      border: 1px solid rgba(0,0,0,0.12);
+      border-radius: 8px;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      min-height: 0;
+    }
+
+    .todo-column-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 12px;
+      border-bottom: 1px solid rgba(0,0,0,0.1);
+      font-weight: bold;
+      color: #222;
+    }
+
+    .todo-count {
+      font-size: 12px;
+      color: #666;
+      font-weight: normal;
+    }
+
+    .todo-list {
+      padding: 10px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-height: 0;
+      flex-grow: 1;
+    }
+
+    .todo-list-over {
+      outline: 2px dashed rgba(0,0,0,0.35);
+      outline-offset: -6px;
+      background: rgba(255,255,255,0.35);
+    }
+
+    .todo-card {
+      background: #fff7b1;
+      border: 1px solid rgba(0,0,0,0.12);
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+      padding: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .todo-content {
+      min-height: 64px;
+      max-height: 160px;
+      overflow-y: auto;
+      outline: none;
+      line-height: 1.4;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 14px;
+    }
+
+    .todo-content:empty::before {
+      content: "Empty note";
+      color: #888;
+    }
+
+    .todo-meta {
+      color: #666;
+      font-size: 11px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .todo-actions {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .todo-status {
+      width: 100%;
+      min-width: 0;
+      font-size: 12px;
+    }
+
+    .todo-action-btn {
+      border: 1px solid rgba(0,0,0,0.16);
+      background: rgba(255,255,255,0.7);
+      border-radius: 6px;
+      cursor: pointer;
+      min-width: 32px;
+      height: 28px;
+      font-size: 12px;
+    }
 
     #settings-modal {
       display: none;
@@ -120,8 +235,34 @@
   </style>
 </head>
 <body>
-  <div id="fab-add" title="Add sticky note">+</div>
-  <div id="fab-settings" title="Background settings">BG</div>
+  <main id="dashboard-shell">
+    <header id="dashboard-toolbar">
+      <h1 id="dashboard-title">SyncSticky Todo</h1>
+      <div class="toolbar-actions">
+        <button class="toolbar-btn" id="btn-add-note" type="button">Add Note</button>
+        <button class="toolbar-btn secondary" id="fab-settings" type="button">BG</button>
+      </div>
+    </header>
+
+    <section id="todo-board">
+      <section class="todo-column" data-status="discussion">
+        <div class="todo-column-header"><span>討論中</span><span class="todo-count" data-count="discussion">0</span></div>
+        <div class="todo-list" data-list="discussion"></div>
+      </section>
+      <section class="todo-column" data-status="waiting">
+        <div class="todo-column-header"><span>等待中</span><span class="todo-count" data-count="waiting">0</span></div>
+        <div class="todo-list" data-list="waiting"></div>
+      </section>
+      <section class="todo-column" data-status="doing">
+        <div class="todo-column-header"><span>執行中</span><span class="todo-count" data-count="doing">0</span></div>
+        <div class="todo-list" data-list="doing"></div>
+      </section>
+      <section class="todo-column" data-status="done">
+        <div class="todo-column-header"><span>已完成</span><span class="todo-count" data-count="done">0</span></div>
+        <div class="todo-list" data-list="done"></div>
+      </section>
+    </section>
+  </main>
 
   <div id="modal-overlay"></div>
   <div id="settings-modal">

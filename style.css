@@ -12,6 +12,40 @@
   font-family: sans-serif;
 }
 
+.sticky-note-minimized {
+  width: 180px;
+  height: 36px;
+  resize: none;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 8px;
+  cursor: grab;
+}
+
+.sticky-note-minimized:active {
+  cursor: grabbing;
+}
+
+.minimized-note-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.note-icon-btn {
+  width: 24px;
+  height: 24px;
+  border: 1px solid rgba(0,0,0,0.16);
+  background: rgba(255,255,255,0.7);
+  border-radius: 6px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
 .sticky-header {
   height: 30px;
   background-color: rgba(0,0,0,0.05);

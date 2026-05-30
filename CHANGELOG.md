@@ -1,5 +1,9 @@
 # Changelog
 
+## 4.3
+- Added minimizable webpage sticky notes with draggable minimized chips.
+- Reworked the dashboard into an interactive four-column todo board.
+
 ## 4.2
 - Added a fixed extension key so unpacked installs can keep the same extension ID across devices.
 - Kept memo data on `chrome.storage.sync` for Chrome account synchronization.

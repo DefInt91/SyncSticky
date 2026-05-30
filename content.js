@@ -3,6 +3,7 @@ const currentUrl = window.location.hostname + window.location.pathname;
 const SAVE_DEBOUNCE_MS = 300;
 const LOCAL_SAVE_IGNORE_MS = 500;
 const FLOATING_BUTTON_POSITION_KEY = 'floatingButtonPosition';
+const DEFAULT_NOTE_STATUS = 'discussion';
 let lastLocalSaveAt = 0;
 
 window.addEventListener('load', () => {
@@ -117,26 +118,36 @@ function getDefaultFloatingButtonPosition(btn) {
   };
 }
 
-function normalizeFloatingButtonPosition(position, fallbackPosition, btn) {
+function normalizeFloatingButtonPosition(position, fallbackPosition, element) {
   const rawLeft = Number.isFinite(position?.left) ? position.left : fallbackPosition.left;
   const rawTop = Number.isFinite(position?.top) ? position.top : fallbackPosition.top;
   return {
-    left: Math.min(Math.max(rawLeft, 0), window.innerWidth - btn.offsetWidth),
-    top: Math.min(Math.max(rawTop, 0), window.innerHeight - btn.offsetHeight)
+    left: Math.min(Math.max(rawLeft, 0), window.innerWidth - element.offsetWidth),
+    top: Math.min(Math.max(rawTop, 0), window.innerHeight - element.offsetHeight)
   };
 }
 
-function applyFloatingButtonPosition(btn, position) {
-  btn.style.left = `${position.left}px`;
-  btn.style.top = `${position.top}px`;
+function applyFloatingButtonPosition(element, position) {
+  element.style.left = `${position.left}px`;
+  element.style.top = `${position.top}px`;
 }
 
 function loadPageNotes() {
   chrome.storage.sync.get(['notes'], (result) => {
     const notes = result.notes || [];
     const pageNotes = notes.filter((note) => note.url === currentUrl);
-    pageNotes.forEach((note) => renderNote(note));
+    pageNotes.forEach((note) => renderNote(normalizeNote(note)));
   });
+}
+
+function normalizeNote(note) {
+  return {
+    ...note,
+    status: note.status || DEFAULT_NOTE_STATUS,
+    minimized: Boolean(note.minimized),
+    minimizedX: Number.isFinite(note.minimizedX) ? note.minimizedX : 12,
+    minimizedY: Number.isFinite(note.minimizedY) ? note.minimizedY : 12
+  };
 }
 
 function createNoteData(targetUrl) {
@@ -150,7 +161,11 @@ function createNoteData(targetUrl) {
     color: '#fff7b1',
     url: targetUrl,
     reminder: '',
-    zIndex: 10000
+    zIndex: 10000,
+    status: DEFAULT_NOTE_STATUS,
+    minimized: false,
+    minimizedX: 12,
+    minimizedY: 12
   };
   saveNoteToStorage(newNote);
   renderNote(newNote);
@@ -161,10 +176,11 @@ function saveNoteToStorage(noteData) {
   chrome.storage.sync.get(['notes'], (result) => {
     const notes = result.notes || [];
     const index = notes.findIndex((note) => note.id === noteData.id);
+    const normalizedNote = normalizeNote(noteData);
     if (index > -1) {
-      notes[index] = { ...noteData };
+      notes[index] = { ...normalizedNote };
     } else {
-      notes.push({ ...noteData });
+      notes.push({ ...normalizedNote });
     }
     chrome.storage.sync.set({ notes });
   });
@@ -242,13 +258,114 @@ function getCountdownText(reminderValue) {
   return `${mins}m left`;
 }
 
+function getNoteSummary(data) {
+  const summary = (data.content || '').trim().replace(/\s+/g, ' ');
+  return summary ? summary.slice(0, 24) : 'Empty note';
+}
+
 function openSafeUrl(url) {
   window.open(url, '_blank', 'noopener,noreferrer');
 }
 
-function renderNote(data) {
+function renderNote(noteData) {
+  const data = normalizeNote(noteData);
   if (document.getElementById(data.id)) return;
 
+  if (data.minimized) {
+    renderMinimizedNote(data);
+  } else {
+    renderExpandedNote(data);
+  }
+}
+
+function renderMinimizedNote(data) {
+  let isDeleted = false;
+  const card = document.createElement('div');
+  card.className = 'sticky-note-card sticky-note-minimized';
+  card.id = data.id;
+  card.style.left = `${data.minimizedX}px`;
+  card.style.top = `${data.minimizedY}px`;
+  card.style.backgroundColor = data.color;
+  card.style.position = 'fixed';
+  card.style.zIndex = data.zIndex || 10000;
+  card.title = 'Drag to move. Double-click to restore.';
+
+  const summary = document.createElement('span');
+  summary.className = 'minimized-note-summary';
+  summary.innerText = getNoteSummary(data);
+
+  const restoreBtn = document.createElement('button');
+  restoreBtn.type = 'button';
+  restoreBtn.className = 'note-icon-btn';
+  restoreBtn.innerText = '+';
+  restoreBtn.title = 'Restore note';
+  restoreBtn.onclick = (event) => {
+    event.stopPropagation();
+    isDeleted = true;
+    data.minimized = false;
+    card.remove();
+    saveNoteToStorage(data);
+    renderExpandedNote(data);
+  };
+
+  card.appendChild(summary);
+  card.appendChild(restoreBtn);
+  document.body.appendChild(card);
+
+  setupMinimizedNoteDrag(card, data, () => isDeleted);
+
+  card.ondblclick = () => {
+    if (isDeleted) return;
+    isDeleted = true;
+    data.minimized = false;
+    card.remove();
+    saveNoteToStorage(data);
+    renderExpandedNote(data);
+  };
+
+  card.cleanupNote = () => {
+    isDeleted = true;
+  };
+}
+
+function setupMinimizedNoteDrag(card, data, getIsDeleted) {
+  let isDragging = false;
+  let startX = 0;
+  let startY = 0;
+  let initialLeft = 0;
+  let initialTop = 0;
+
+  card.addEventListener('mousedown', (event) => {
+    if (event.target.closest('button')) return;
+    isDragging = true;
+    startX = event.clientX;
+    startY = event.clientY;
+    initialLeft = card.offsetLeft;
+    initialTop = card.offsetTop;
+    globalMaxZIndex++;
+    card.style.zIndex = globalMaxZIndex;
+    data.zIndex = globalMaxZIndex;
+  });
+
+  window.addEventListener('mousemove', (event) => {
+    if (!isDragging || getIsDeleted()) return;
+    const position = normalizeFloatingButtonPosition({
+      left: initialLeft + event.clientX - startX,
+      top: initialTop + event.clientY - startY
+    }, { left: 12, top: 12 }, card);
+    applyFloatingButtonPosition(card, position);
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (!isDragging || getIsDeleted()) return;
+    isDragging = false;
+    data.minimizedX = parseInt(card.style.left, 10);
+    data.minimizedY = parseInt(card.style.top, 10);
+    saveNoteToStorage(data);
+  });
+}
+
+function renderExpandedNote(data) {
   let isDeleted = false;
   let resizeObserver;
   let timerInterval;
@@ -301,6 +418,23 @@ function renderNote(data) {
   };
   leftControls.appendChild(colorInput);
 
+  const minimizeBtn = document.createElement('span');
+  minimizeBtn.innerText = '_';
+  minimizeBtn.title = 'Minimize note';
+  minimizeBtn.className = 'close-btn';
+  minimizeBtn.onmousedown = (event) => event.stopPropagation();
+  minimizeBtn.onclick = () => {
+    isDeleted = true;
+    clearInterval(timerInterval);
+    if (resizeObserver) resizeObserver.disconnect();
+    data.minimized = true;
+    data.minimizedX = Number.isFinite(data.minimizedX) ? data.minimizedX : 12;
+    data.minimizedY = Number.isFinite(data.minimizedY) ? data.minimizedY : 12;
+    card.remove();
+    saveNoteToStorage(data);
+    renderMinimizedNote(data);
+  };
+
   const closeBtn = document.createElement('span');
   closeBtn.innerText = 'x';
   closeBtn.title = 'Delete note';
@@ -312,8 +446,13 @@ function renderNote(data) {
     deleteNoteFromStorage(data.id);
   };
 
+  const rightControls = document.createElement('div');
+  rightControls.style.display = 'flex';
+  rightControls.appendChild(minimizeBtn);
+  rightControls.appendChild(closeBtn);
+
   header.appendChild(leftControls);
-  header.appendChild(closeBtn);
+  header.appendChild(rightControls);
 
   const content = document.createElement('div');
   content.className = 'sticky-content';
