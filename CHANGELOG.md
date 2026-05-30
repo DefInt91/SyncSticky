@@ -1,5 +1,8 @@
 # Changelog
 
+## 4.4
+- Fixed sticky note text and date picker contrast on dark websites.
+
 ## 4.3
 - Added minimizable webpage sticky notes with draggable minimized chips.
 - Reworked the dashboard into an interactive four-column todo board.

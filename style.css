@@ -2,6 +2,8 @@
 .sticky-note-card {
   position: fixed;
   background-color: #fff7b1;
+  color: #222;
+  color-scheme: light;
   border: 1px solid #e0e0e0;
   box-shadow: 2px 4px 10px rgba(0,0,0,0.2);
   border-radius: 8px;
@@ -29,6 +31,7 @@
 }
 
 .minimized-note-summary {
+  color: #222;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -37,6 +40,7 @@
 }
 
 .note-icon-btn {
+  color: #222;
   width: 24px;
   height: 24px;
   border: 1px solid rgba(0,0,0,0.16);
@@ -47,6 +51,7 @@
 }
 
 .sticky-header {
+  color: #222;
   height: 30px;
   background-color: rgba(0,0,0,0.05);
   cursor: grab;
@@ -72,6 +77,7 @@
 .close-btn:hover { color: red; }
 
 .sticky-content {
+  color: #222;
   flex-grow: 1;
   padding: 10px;
   outline: none;
@@ -85,6 +91,7 @@
 .sticky-content a { color: blue; text-decoration: underline; cursor: pointer; }
 
 .sticky-footer {
+  color: #222;
   padding: 5px;
   background: rgba(255,255,255,0.4);
   display: flex;
@@ -94,11 +101,18 @@
 }
 
 .date-picker {
+  color: #222;
+  color-scheme: light;
   border: none;
   background: transparent;
   font-family: inherit;
   font-size: 11px;
   width: 100%;
+}
+
+.date-picker::-webkit-calendar-picker-indicator {
+  filter: none;
+  opacity: 0.85;
 }
 
 .countdown-text {
