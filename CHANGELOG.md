@@ -1,5 +1,9 @@
 # Changelog
 
+## 4.2
+- Added a fixed extension key so unpacked installs can keep the same extension ID across devices.
+- Kept memo data on `chrome.storage.sync` for Chrome account synchronization.
+
 ## 4.1
 - Fixed extension manifest and script syntax issues.
 - Rebuilt corrupted UI text in English.
