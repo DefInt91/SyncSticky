@@ -2,10 +2,10 @@ const SAVE_DEBOUNCE_MS = 300;
 const LOCAL_SAVE_IGNORE_MS = 500;
 const DEFAULT_NOTE_STATUS = 'discussion';
 const TODO_STATUSES = [
-  { value: 'discussion', label: '討論中' },
-  { value: 'waiting', label: '等待中' },
-  { value: 'doing', label: '執行中' },
-  { value: 'done', label: '已完成' }
+  { value: 'discussion', label: 'Discussion' },
+  { value: 'waiting', label: 'Waiting' },
+  { value: 'doing', label: 'Doing' },
+  { value: 'done', label: 'Done' }
 ];
 let lastLocalSaveAt = 0;
 

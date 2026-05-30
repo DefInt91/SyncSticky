@@ -1,5 +1,8 @@
 # Changelog
 
+## 4.5
+- Changed dashboard todo status labels to English.
+
 ## 4.4
 - Fixed sticky note text and date picker contrast on dark websites.
 
