@@ -1,5 +1,8 @@
 # Changelog
 
+## 4.6
+- Refined dashboard and sticky styling with a production-grade operations board aesthetic.
+
 ## 4.5
 - Changed dashboard todo status labels to English.
 

@@ -1,22 +1,33 @@
 /* SyncSticky note styles */
+:root {
+  --ss-ink: #1f2320;
+  --ss-muted: #5f665f;
+  --ss-paper: #fff8c7;
+  --ss-line: rgba(31,35,32,0.18);
+  --ss-shadow: 0 12px 28px rgba(0,0,0,0.2);
+  --ss-accent: #0f766e;
+  --ss-danger: #a33a2f;
+}
+
 .sticky-note-card {
   position: fixed;
-  background-color: #fff7b1;
-  color: #222;
+  background-color: var(--ss-paper);
+  color: var(--ss-ink);
   color-scheme: light;
-  border: 1px solid #e0e0e0;
-  box-shadow: 2px 4px 10px rgba(0,0,0,0.2);
+  border: 1px solid var(--ss-line);
+  border-top: 4px solid var(--ss-accent);
+  box-shadow: var(--ss-shadow);
   border-radius: 8px;
   display: flex;
   flex-direction: column;
   resize: both;
   overflow: hidden;
-  font-family: sans-serif;
+  font-family: "Bahnschrift", "Aptos", "Segoe UI", sans-serif;
 }
 
 .sticky-note-minimized {
-  width: 180px;
-  height: 36px;
+  width: 190px;
+  height: 38px;
   resize: none;
   flex-direction: row;
   align-items: center;
@@ -24,6 +35,7 @@
   gap: 8px;
   padding: 0 8px;
   cursor: grab;
+  border-top-width: 3px;
 }
 
 .sticky-note-minimized:active {
@@ -31,36 +43,40 @@
 }
 
 .minimized-note-summary {
-  color: #222;
+  color: var(--ss-ink);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 13px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
 }
 
 .note-icon-btn {
-  color: #222;
+  color: var(--ss-ink);
   width: 24px;
   height: 24px;
-  border: 1px solid rgba(0,0,0,0.16);
-  background: rgba(255,255,255,0.7);
+  border: 1px solid var(--ss-line);
+  background: rgba(255,255,255,0.72);
   border-radius: 6px;
   cursor: pointer;
   flex-shrink: 0;
+  font-weight: 800;
 }
 
 .sticky-header {
-  color: #222;
+  color: var(--ss-ink);
   height: 30px;
-  background-color: rgba(0,0,0,0.05);
+  background-color: rgba(255,255,255,0.28);
   cursor: grab;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 0 5px;
+  padding: 0 6px;
   user-select: none;
   flex-shrink: 0;
+  border-bottom: 1px solid rgba(31,35,32,0.1);
 }
 
 .sticky-header:active {
@@ -69,55 +85,75 @@
 
 .close-btn {
   cursor: pointer;
-  font-weight: bold;
-  color: #555;
-  padding: 0 5px;
+  font-weight: 900;
+  color: var(--ss-muted);
+  padding: 0 6px;
+  line-height: 1;
 }
 
-.close-btn:hover { color: red; }
+.close-btn:hover {
+  color: var(--ss-danger);
+}
 
 .sticky-content {
-  color: #222;
+  color: var(--ss-ink);
   flex-grow: 1;
-  padding: 10px;
+  padding: 12px;
   outline: none;
   overflow-y: auto;
   font-size: 14px;
-  line-height: 1.4;
+  line-height: 1.45;
   white-space: pre-wrap;
-  word-break: break-all;
+  word-break: break-word;
 }
 
-.sticky-content a { color: blue; text-decoration: underline; cursor: pointer; }
+.sticky-content:focus {
+  background: rgba(255,255,255,0.18);
+}
+
+.sticky-content a {
+  color: #0f5f92;
+  text-decoration: underline;
+  cursor: pointer;
+  font-weight: 700;
+}
 
 .sticky-footer {
-  color: #222;
-  padding: 5px;
-  background: rgba(255,255,255,0.4);
+  color: var(--ss-ink);
+  padding: 6px;
+  background: rgba(255,255,255,0.42);
+  border-top: 1px solid rgba(31,35,32,0.1);
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
   font-size: 12px;
 }
 
 .date-picker {
-  color: #222;
+  color: var(--ss-ink);
   color-scheme: light;
-  border: none;
-  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.3);
   font-family: inherit;
   font-size: 11px;
   width: 100%;
+  min-height: 24px;
+}
+
+.date-picker:focus {
+  border-color: rgba(15,118,110,0.45);
+  outline: none;
 }
 
 .date-picker::-webkit-calendar-picker-indicator {
   filter: none;
-  opacity: 0.85;
+  opacity: 0.9;
 }
 
 .countdown-text {
-  color: #d32f2f;
-  font-weight: bold;
+  color: var(--ss-danger);
+  font-weight: 800;
   font-size: 11px;
   text-align: right;
   min-height: 14px;
