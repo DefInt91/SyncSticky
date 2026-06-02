@@ -22,6 +22,39 @@ function clearReminder(noteId) {
   chrome.alarms.clear(getAlarmName(noteId));
 }
 
+function syncReminderAlarms() {
+  chrome.storage.sync.get(['notes'], (result) => {
+    const notes = result.notes || [];
+    const activeReminderMap = new Map();
+
+    notes.forEach((note) => {
+      const when = new Date(note.reminder).getTime();
+      if (note.id && Number.isFinite(when) && when > Date.now()) {
+        activeReminderMap.set(getAlarmName(note.id), when);
+      }
+    });
+
+    chrome.alarms.getAll((alarms) => {
+      alarms
+        .filter((alarm) => alarm.name.startsWith(ALARM_PREFIX))
+        .forEach((alarm) => {
+          if (!activeReminderMap.has(alarm.name)) {
+            chrome.alarms.clear(alarm.name);
+          }
+        });
+
+      activeReminderMap.forEach((when, alarmName) => {
+        chrome.alarms.get(alarmName, (alarm) => {
+          if (alarm && Math.abs(alarm.scheduledTime - when) < 1000) return;
+          chrome.alarms.clear(alarmName, () => {
+            chrome.alarms.create(alarmName, { when });
+          });
+        });
+      });
+    });
+  });
+}
+
 chrome.action.onClicked.addListener(() => {
   chrome.tabs.create({ url: 'dashboard.html' });
 });
@@ -35,6 +68,15 @@ chrome.runtime.onMessage.addListener((message) => {
 
   if (message.type === 'clearReminder') {
     clearReminder(message.noteId);
+  }
+});
+
+chrome.runtime.onInstalled.addListener(syncReminderAlarms);
+chrome.runtime.onStartup.addListener(syncReminderAlarms);
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'sync' && changes.notes) {
+    syncReminderAlarms();
   }
 });
 

@@ -3,19 +3,29 @@ const currentUrl = window.location.hostname + window.location.pathname;
 const SAVE_DEBOUNCE_MS = 300;
 const LOCAL_SAVE_IGNORE_MS = 500;
 const FLOATING_BUTTON_POSITION_KEY = 'floatingButtonPosition';
+const EDGE_BAR_SETTINGS_KEY = 'edgeReminderBarSettings';
+const EDGE_BAR_ID = 'syncsticky-edge-reminder-bar';
+const DEFAULT_TAB_ID = 'default';
 const DEFAULT_NOTE_STATUS = 'discussion';
 let lastLocalSaveAt = 0;
 
 window.addEventListener('load', () => {
   createFloatingButton();
   loadPageNotes();
+  loadEdgeReminderBar();
 });
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'sync' && changes.notes) {
-    if (Date.now() - lastLocalSaveAt < LOCAL_SAVE_IGNORE_MS) return;
-    removeAllRenderedNotes();
-    loadPageNotes();
+    if (Date.now() - lastLocalSaveAt >= LOCAL_SAVE_IGNORE_MS) {
+      removeAllRenderedNotes();
+      loadPageNotes();
+    }
+    loadEdgeReminderBar();
+  }
+
+  if (area === 'sync' && changes.boardSettings) {
+    loadEdgeReminderBar();
   }
 });
 
@@ -132,6 +142,193 @@ function applyFloatingButtonPosition(element, position) {
   element.style.top = `${position.top}px`;
 }
 
+function loadEdgeReminderBar() {
+  chrome.storage.sync.get(['notes', 'boardSettings'], (syncResult) => {
+    const groups = getEdgeReminderGroups(syncResult.notes || [], syncResult.boardSettings);
+    chrome.storage.local.get([EDGE_BAR_SETTINGS_KEY], (localResult) => {
+      const settings = normalizeEdgeBarSettings(localResult[EDGE_BAR_SETTINGS_KEY]);
+      renderEdgeReminderBar(groups, settings);
+    });
+  });
+}
+
+function getEdgeReminderGroups(notes, boardSettings) {
+  const tabs = Array.isArray(boardSettings?.tabs) && boardSettings.tabs.length
+    ? boardSettings.tabs
+    : [{ id: DEFAULT_TAB_ID, label: 'Default', statuses: [{ id: DEFAULT_NOTE_STATUS, label: 'Discussion', color: '#c98219' }] }];
+  const groups = new Map();
+  notes.map(normalizeNote)
+    .filter((note) => note.edgeReminder)
+    .forEach((note) => {
+      const tab = tabs.find((item) => item.id === note.tabId) || tabs[0];
+      const statuses = Array.isArray(tab.statuses) && tab.statuses.length ? tab.statuses : tabs[0].statuses;
+      const status = statuses.find((item) => item.id === note.status) || statuses[0];
+      const key = `${tab.id}:${status.id}`;
+      const existing = groups.get(key) || {
+        tabId: tab.id,
+        tabLabel: tab.label || 'Default',
+        statusId: status.id,
+        statusLabel: status.label || 'Status',
+        color: isHexColor(status.color) ? status.color : '#c98219',
+        count: 0
+      };
+      existing.count += 1;
+      groups.set(key, existing);
+    });
+  return Array.from(groups.values());
+}
+
+function isHexColor(value) {
+  return /^#[0-9a-f]{6}$/i.test(String(value || ''));
+}
+
+function normalizeEdgeBarSettings(settings) {
+  return {
+    left: Number.isFinite(settings?.left) ? settings.left : window.innerWidth - 52,
+    top: Number.isFinite(settings?.top) ? settings.top : 90,
+    opacity: Number.isFinite(settings?.opacity) ? Math.min(Math.max(settings.opacity, 0.2), 1) : 0.82
+  };
+}
+
+function saveEdgeBarSettings(settings) {
+  chrome.storage.local.set({ [EDGE_BAR_SETTINGS_KEY]: settings });
+}
+
+function renderEdgeReminderBar(groups, settings) {
+  const existing = document.getElementById(EDGE_BAR_ID);
+  if (!groups.length) {
+    if (existing) existing.remove();
+    return;
+  }
+
+  const bar = existing || document.createElement('div');
+  bar.id = EDGE_BAR_ID;
+  bar.innerHTML = '';
+  bar.style.cssText = `
+    position: fixed;
+    left: ${Math.min(Math.max(settings.left, 0), window.innerWidth - 48)}px;
+    top: ${Math.min(Math.max(settings.top, 0), window.innerHeight - 80)}px;
+    z-index: 2147483646;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    width: 42px;
+    padding: 6px 4px;
+    border-radius: 8px;
+    background: rgba(20,22,20,${settings.opacity * 0.54});
+    box-shadow: 0 10px 24px rgba(0,0,0,0.22);
+    cursor: grab;
+    user-select: none;
+    color-scheme: light;
+    font-family: "Bahnschrift", "Aptos", "Segoe UI", sans-serif;
+  `;
+  bar.title = 'SyncSticky edge reminders';
+
+  groups.forEach((group) => {
+    const item = document.createElement('div');
+    item.style.cssText = `
+      min-height: 32px;
+      border-radius: 6px;
+      background: ${group.color};
+      color: #1f2320;
+      border: 1px solid rgba(31,35,32,0.18);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 1px;
+      font-weight: 900;
+      opacity: ${settings.opacity};
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.32);
+      overflow: hidden;
+    `;
+    const count = document.createElement('span');
+    count.style.cssText = 'font-size: 12px; line-height: 1;';
+    count.innerText = String(group.count);
+
+    const label = document.createElement('span');
+    label.style.cssText = 'max-width: 34px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 8px; line-height: 1;';
+    label.innerText = group.tabLabel;
+
+    item.appendChild(count);
+    item.appendChild(label);
+    item.title = `${group.tabLabel}/${group.statusLabel}: ${group.count} reminder item(s)`;
+    bar.appendChild(item);
+  });
+
+  const opacityInput = document.createElement('input');
+  opacityInput.type = 'range';
+  opacityInput.min = '0.2';
+  opacityInput.max = '1';
+  opacityInput.step = '0.05';
+  opacityInput.value = String(settings.opacity);
+  opacityInput.title = 'Opacity';
+  opacityInput.style.cssText = `
+    width: 40px;
+    height: 18px;
+    margin: 2px 0 0;
+    accent-color: #0f766e;
+    cursor: pointer;
+  `;
+  opacityInput.onmousedown = (event) => event.stopPropagation();
+  opacityInput.oninput = () => {
+    settings.opacity = Number(opacityInput.value);
+    saveEdgeBarSettings(settings);
+    loadEdgeReminderBar();
+  };
+  bar.appendChild(opacityInput);
+
+  if (!existing) {
+    document.body.appendChild(bar);
+    setupEdgeBarDrag(bar, settings);
+  }
+}
+
+function setupEdgeBarDrag(bar, settings) {
+  let isDragging = false;
+  let startX = 0;
+  let startY = 0;
+  let initialLeft = 0;
+  let initialTop = 0;
+
+  bar.addEventListener('mousedown', (event) => {
+    if (event.target.tagName === 'INPUT') return;
+    isDragging = true;
+    startX = event.clientX;
+    startY = event.clientY;
+    initialLeft = bar.offsetLeft;
+    initialTop = bar.offsetTop;
+    bar.style.cursor = 'grabbing';
+  });
+
+  window.addEventListener('mousemove', (event) => {
+    if (!isDragging) return;
+    const nextLeft = Math.min(Math.max(initialLeft + event.clientX - startX, 0), window.innerWidth - bar.offsetWidth);
+    const nextTop = Math.min(Math.max(initialTop + event.clientY - startY, 0), window.innerHeight - bar.offsetHeight);
+    bar.style.left = `${nextLeft}px`;
+    bar.style.top = `${nextTop}px`;
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (!isDragging) return;
+    isDragging = false;
+    bar.style.cursor = 'grab';
+    settings.left = bar.offsetLeft;
+    settings.top = bar.offsetTop;
+    saveEdgeBarSettings(settings);
+  });
+
+  window.addEventListener('resize', () => {
+    const nextSettings = normalizeEdgeBarSettings({
+      ...settings,
+      left: bar.offsetLeft,
+      top: bar.offsetTop
+    });
+    saveEdgeBarSettings(nextSettings);
+    loadEdgeReminderBar();
+  });
+}
+
 function loadPageNotes() {
   chrome.storage.sync.get(['notes'], (result) => {
     const notes = result.notes || [];
@@ -144,6 +341,8 @@ function normalizeNote(note) {
   return {
     ...note,
     status: note.status || DEFAULT_NOTE_STATUS,
+    tabId: note.tabId || DEFAULT_TAB_ID,
+    edgeReminder: Boolean(note.edgeReminder),
     minimized: Boolean(note.minimized),
     minimizedX: Number.isFinite(note.minimizedX) ? note.minimizedX : 12,
     minimizedY: Number.isFinite(note.minimizedY) ? note.minimizedY : 12
@@ -151,24 +350,32 @@ function normalizeNote(note) {
 }
 
 function createNoteData(targetUrl) {
-  const newNote = {
-    id: Date.now().toString(),
-    content: '',
-    x: 100 + Math.random() * 50,
-    y: 100 + Math.random() * 50,
-    width: 250,
-    height: 250,
-    color: '#fff7b1',
-    url: targetUrl,
-    reminder: '',
-    zIndex: 10000,
-    status: DEFAULT_NOTE_STATUS,
-    minimized: false,
-    minimizedX: 12,
-    minimizedY: 12
-  };
-  saveNoteToStorage(newNote);
-  renderNote(newNote);
+  chrome.storage.sync.get(['boardSettings'], (result) => {
+    const tabs = result.boardSettings?.tabs || [];
+    const activeTab = tabs.find((tab) => tab.id === result.boardSettings?.activeTabId) || tabs[0];
+    const firstTab = activeTab?.id || DEFAULT_TAB_ID;
+    const firstStatus = activeTab?.statuses?.[0]?.id || result.boardSettings?.statuses?.[0]?.id || DEFAULT_NOTE_STATUS;
+    const newNote = {
+      id: Date.now().toString(),
+      content: '',
+      x: 100 + Math.random() * 50,
+      y: 100 + Math.random() * 50,
+      width: 250,
+      height: 250,
+      color: '#fff7b1',
+      url: targetUrl,
+      reminder: '',
+      zIndex: 10000,
+      status: firstStatus,
+      tabId: firstTab,
+      edgeReminder: false,
+      minimized: false,
+      minimizedX: 12,
+      minimizedY: 12
+    };
+    saveNoteToStorage(newNote);
+    renderNote(newNote);
+  });
 }
 
 function saveNoteToStorage(noteData) {

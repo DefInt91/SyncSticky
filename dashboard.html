@@ -106,11 +106,142 @@
     }
 
     #todo-board {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      display: flex;
+      flex-wrap: wrap;
+      align-content: flex-start;
       gap: 12px;
       min-height: 0;
       flex-grow: 1;
+      overflow: auto;
+      padding-right: 2px;
+    }
+
+    #tab-bar {
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      flex-shrink: 0;
+      padding: 2px 0;
+    }
+
+    .tab-btn {
+      border: 1px solid var(--dash-line);
+      border-radius: 6px;
+      padding: 8px 12px;
+      min-height: 34px;
+      background: rgba(255,255,255,0.76);
+      color: var(--dash-charcoal);
+      cursor: pointer;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .tab-btn.active {
+      background: var(--dash-charcoal);
+      color: white;
+      border-color: var(--dash-charcoal);
+    }
+
+    #board-settings-panel {
+      flex-shrink: 0;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      padding: 12px;
+      background: rgba(255,255,255,0.74);
+      border: 1px solid var(--dash-line);
+      border-radius: 8px;
+      box-shadow: 0 10px 24px rgba(32,35,31,0.1);
+      backdrop-filter: blur(8px);
+    }
+
+    #board-settings-panel[hidden] {
+      display: none;
+    }
+
+    .settings-section {
+      min-width: 0;
+    }
+
+    .settings-section h2 {
+      margin: 0 0 8px;
+      font-size: 13px;
+      color: var(--dash-muted);
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+
+    .settings-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .settings-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .settings-row.status-row {
+      grid-template-columns: auto minmax(0, 1fr) auto;
+    }
+
+    .settings-text {
+      min-width: 0;
+      height: 30px;
+      border: 1px solid var(--dash-line);
+      border-radius: 6px;
+      padding: 0 8px;
+      font-family: inherit;
+      font-weight: 700;
+    }
+
+    .settings-color,
+    .todo-color {
+      width: 32px;
+      height: 30px;
+      padding: 0;
+      border: 1px solid var(--dash-line);
+      border-radius: 6px;
+      background: white;
+      cursor: pointer;
+    }
+
+    .settings-mini-btn {
+      height: 30px;
+      border: 1px solid var(--dash-line);
+      border-radius: 6px;
+      background: white;
+      color: var(--dash-charcoal);
+      cursor: pointer;
+      font-weight: 800;
+    }
+
+    .settings-mini-btn:disabled {
+      opacity: 0.42;
+      cursor: not-allowed;
+    }
+
+    .column-resize-handle {
+      position: absolute;
+      right: 5px;
+      bottom: 5px;
+      width: 18px;
+      height: 18px;
+      border: 0;
+      border-radius: 5px;
+      background:
+        linear-gradient(135deg, transparent 48%, rgba(32,35,31,0.38) 50%, transparent 54%),
+        linear-gradient(135deg, transparent 62%, rgba(32,35,31,0.28) 64%, transparent 68%);
+      cursor: nwse-resize;
+      opacity: 0.7;
+    }
+
+    .column-resize-handle:hover {
+      opacity: 1;
+      background-color: rgba(15,118,110,0.08);
     }
 
     .todo-column {
@@ -124,6 +255,8 @@
       overflow: hidden;
       box-shadow: 0 10px 28px rgba(32,35,31,0.1);
       backdrop-filter: blur(8px);
+      position: relative;
+      flex: 0 0 calc(24% - 12px);
     }
 
     .todo-column[data-status="discussion"] { border-top: 5px solid var(--dash-amber); }
@@ -176,12 +309,59 @@
       display: flex;
       flex-direction: column;
       gap: 8px;
+      position: relative;
       transition: transform 0.14s ease, box-shadow 0.14s ease;
     }
 
     .todo-card:hover {
       transform: translateY(-1px);
       box-shadow: 0 12px 26px rgba(32,35,31,0.18);
+    }
+
+    .todo-card-header {
+      position: absolute;
+      top: 7px;
+      right: 7px;
+      z-index: 2;
+    }
+
+    .todo-reminder-btn {
+      width: 28px;
+      height: 28px;
+      border: 1px solid rgba(32,35,31,0.18);
+      border-radius: 6px;
+      background: rgba(255,255,255,0.72);
+      color: var(--dash-muted);
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 900;
+      line-height: 1;
+    }
+
+    .todo-reminder-btn.active {
+      background: var(--dash-charcoal);
+      color: white;
+      border-color: var(--dash-charcoal);
+    }
+
+    .todo-reminder-panel {
+      position: absolute;
+      top: 32px;
+      right: 0;
+      width: 218px;
+      padding: 8px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 6px;
+      align-items: center;
+      background: rgba(255,255,255,0.96);
+      border: 1px solid rgba(32,35,31,0.18);
+      border-radius: 8px;
+      box-shadow: 0 12px 28px rgba(32,35,31,0.2);
+    }
+
+    .todo-reminder-panel[hidden] {
+      display: none;
     }
 
     .todo-content {
@@ -215,7 +395,7 @@
 
     .todo-actions {
       display: grid;
-      grid-template-columns: 1fr auto auto;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto auto auto;
       gap: 6px;
       align-items: center;
     }
@@ -248,6 +428,52 @@
     .todo-action-btn:disabled {
       opacity: 0.42;
       cursor: not-allowed;
+    }
+
+    .todo-toggle {
+      height: 28px;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 0 8px;
+      border: 1px solid rgba(32,35,31,0.18);
+      border-radius: 6px;
+      background: rgba(255,255,255,0.66);
+      font-size: 12px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .todo-reminder {
+      width: 100%;
+      min-width: 0;
+      height: 28px;
+      border: 1px solid rgba(32,35,31,0.18);
+      border-radius: 6px;
+      background: rgba(255,255,255,0.62);
+      color: var(--dash-ink);
+      font-family: inherit;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .todo-reminder-text {
+      grid-column: 1 / -1;
+      min-height: 13px;
+      color: var(--dash-rust);
+      font-size: 11px;
+      font-weight: 800;
+      text-align: right;
+    }
+
+    @media (max-width: 920px) {
+      #board-settings-panel {
+        grid-template-columns: 1fr;
+      }
+
+      .todo-actions {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto;
+      }
     }
 
     #settings-modal {
@@ -317,28 +543,27 @@
       <h1 id="dashboard-title">SyncSticky Todo</h1>
       <div class="toolbar-actions">
         <button class="toolbar-btn" id="btn-add-note" type="button">Add Note</button>
+        <button class="toolbar-btn secondary" id="btn-board-settings" type="button">Board</button>
         <button class="toolbar-btn secondary" id="fab-settings" type="button">BG</button>
       </div>
     </header>
 
-    <section id="todo-board">
-      <section class="todo-column" data-status="discussion">
-        <div class="todo-column-header"><span>Discussion</span><span class="todo-count" data-count="discussion">0</span></div>
-        <div class="todo-list" data-list="discussion"></div>
+    <nav id="tab-bar" aria-label="Board tabs"></nav>
+
+    <section id="board-settings-panel" hidden>
+      <section class="settings-section">
+        <h2>Tabs</h2>
+        <div class="settings-list" id="tab-settings-list"></div>
+        <button class="settings-mini-btn" id="btn-add-tab" type="button">Add Tab</button>
       </section>
-      <section class="todo-column" data-status="waiting">
-        <div class="todo-column-header"><span>Waiting</span><span class="todo-count" data-count="waiting">0</span></div>
-        <div class="todo-list" data-list="waiting"></div>
-      </section>
-      <section class="todo-column" data-status="doing">
-        <div class="todo-column-header"><span>Doing</span><span class="todo-count" data-count="doing">0</span></div>
-        <div class="todo-list" data-list="doing"></div>
-      </section>
-      <section class="todo-column" data-status="done">
-        <div class="todo-column-header"><span>Done</span><span class="todo-count" data-count="done">0</span></div>
-        <div class="todo-list" data-list="done"></div>
+      <section class="settings-section">
+        <h2>Statuses</h2>
+        <div class="settings-list" id="status-settings-list"></div>
+        <button class="settings-mini-btn" id="btn-add-status" type="button">Add Status</button>
       </section>
     </section>
+
+    <section id="todo-board"></section>
   </main>
 
   <div id="modal-overlay"></div>
