@@ -68,7 +68,7 @@ function setupFloatingButtonPosition(btn) {
 
   chrome.storage.local.get([FLOATING_BUTTON_POSITION_KEY], (result) => {
     const savedPosition = result[FLOATING_BUTTON_POSITION_KEY];
-    const position = normalizeFloatingButtonPosition(savedPosition, defaultPosition, btn);
+    const position = restoreSnappedPosition(savedPosition, defaultPosition, btn);
     applyFloatingButtonPosition(btn, position);
   });
 
@@ -100,10 +100,11 @@ function setupFloatingButtonPosition(btn) {
     if (!isDragging) return;
     isDragging = false;
 
-    const position = {
+    const position = getSnappedPosition({
       left: btn.offsetLeft,
       top: btn.offsetTop
-    };
+    }, btn);
+    applyFloatingButtonPosition(btn, position);
     chrome.storage.local.set({ [FLOATING_BUTTON_POSITION_KEY]: position });
 
     if (!wasDragged) {
@@ -112,7 +113,7 @@ function setupFloatingButtonPosition(btn) {
   });
 
   window.addEventListener('resize', () => {
-    const position = normalizeFloatingButtonPosition({
+    const position = restoreSnappedPosition({
       left: btn.offsetLeft,
       top: btn.offsetTop
     }, defaultPosition, btn);
@@ -123,8 +124,8 @@ function setupFloatingButtonPosition(btn) {
 
 function getDefaultFloatingButtonPosition(btn) {
   return {
-    left: window.innerWidth - btn.offsetWidth - 20,
-    top: window.innerHeight - btn.offsetHeight - 20
+    left: window.innerWidth - btn.offsetWidth,
+    top: window.innerHeight - btn.offsetHeight
   };
 }
 
@@ -135,6 +136,38 @@ function normalizeFloatingButtonPosition(position, fallbackPosition, element) {
     left: Math.min(Math.max(rawLeft, 0), window.innerWidth - element.offsetWidth),
     top: Math.min(Math.max(rawTop, 0), window.innerHeight - element.offsetHeight)
   };
+}
+
+function getSnappedPosition(position, element) {
+  const normalized = normalizeFloatingButtonPosition(position, position, element);
+  const maxLeft = Math.max(window.innerWidth - element.offsetWidth, 0);
+  const maxTop = Math.max(window.innerHeight - element.offsetHeight, 0);
+  const distances = [
+    { edge: 'left', value: normalized.left },
+    { edge: 'right', value: maxLeft - normalized.left },
+    { edge: 'top', value: normalized.top },
+    { edge: 'bottom', value: maxTop - normalized.top }
+  ];
+  const nearest = distances.reduce((closest, item) => (
+    item.value < closest.value ? item : closest
+  ), distances[0]);
+
+  if (nearest.edge === 'left') return { ...normalized, left: 0, edge: nearest.edge };
+  if (nearest.edge === 'right') return { ...normalized, left: maxLeft, edge: nearest.edge };
+  if (nearest.edge === 'top') return { ...normalized, top: 0, edge: nearest.edge };
+  return { ...normalized, top: maxTop, edge: nearest.edge };
+}
+
+function restoreSnappedPosition(position, fallbackPosition, element) {
+  const normalized = normalizeFloatingButtonPosition(position, fallbackPosition, element);
+  const maxLeft = Math.max(window.innerWidth - element.offsetWidth, 0);
+  const maxTop = Math.max(window.innerHeight - element.offsetHeight, 0);
+
+  if (position?.edge === 'left') return { ...normalized, left: 0, edge: 'left' };
+  if (position?.edge === 'right') return { ...normalized, left: maxLeft, edge: 'right' };
+  if (position?.edge === 'top') return { ...normalized, top: 0, edge: 'top' };
+  if (position?.edge === 'bottom') return { ...normalized, top: maxTop, edge: 'bottom' };
+  return getSnappedPosition(normalized, element);
 }
 
 function applyFloatingButtonPosition(element, position) {
@@ -184,8 +217,9 @@ function isHexColor(value) {
 
 function normalizeEdgeBarSettings(settings) {
   return {
-    left: Number.isFinite(settings?.left) ? settings.left : window.innerWidth - 52,
+    left: Number.isFinite(settings?.left) ? settings.left : window.innerWidth - 50,
     top: Number.isFinite(settings?.top) ? settings.top : 90,
+    edge: typeof settings?.edge === 'string' ? settings.edge : 'right',
     opacity: Number.isFinite(settings?.opacity) ? Math.min(Math.max(settings.opacity, 0.2), 1) : 0.82
   };
 }
@@ -202,12 +236,17 @@ function renderEdgeReminderBar(groups, settings) {
   }
 
   const bar = existing || document.createElement('div');
+  const position = restoreSnappedPosition(settings, {
+    left: window.innerWidth - 50,
+    top: 90,
+    edge: 'right'
+  }, bar);
   bar.id = EDGE_BAR_ID;
   bar.innerHTML = '';
   bar.style.cssText = `
     position: fixed;
-    left: ${Math.min(Math.max(settings.left, 0), window.innerWidth - 48)}px;
-    top: ${Math.min(Math.max(settings.top, 0), window.innerHeight - 80)}px;
+    left: ${position.left}px;
+    top: ${position.top}px;
     z-index: 2147483646;
     display: flex;
     flex-direction: column;
@@ -280,6 +319,12 @@ function renderEdgeReminderBar(groups, settings) {
 
   if (!existing) {
     document.body.appendChild(bar);
+    const snappedPosition = restoreSnappedPosition(settings, {
+      left: window.innerWidth - bar.offsetWidth,
+      top: 90,
+      edge: 'right'
+    }, bar);
+    applyFloatingButtonPosition(bar, snappedPosition);
     setupEdgeBarDrag(bar, settings);
   }
 }
@@ -313,17 +358,27 @@ function setupEdgeBarDrag(bar, settings) {
     if (!isDragging) return;
     isDragging = false;
     bar.style.cursor = 'grab';
-    settings.left = bar.offsetLeft;
-    settings.top = bar.offsetTop;
+    const snappedPosition = getSnappedPosition({
+      left: bar.offsetLeft,
+      top: bar.offsetTop
+    }, bar);
+    applyFloatingButtonPosition(bar, snappedPosition);
+    settings.left = snappedPosition.left;
+    settings.top = snappedPosition.top;
+    settings.edge = snappedPosition.edge;
     saveEdgeBarSettings(settings);
   });
 
   window.addEventListener('resize', () => {
-    const nextSettings = normalizeEdgeBarSettings({
+    const nextSettings = restoreSnappedPosition({
       ...settings,
       left: bar.offsetLeft,
       top: bar.offsetTop
-    });
+    }, {
+      left: window.innerWidth - 50,
+      top: 90,
+      edge: 'right'
+    }, bar);
     saveEdgeBarSettings(nextSettings);
     loadEdgeReminderBar();
   });
