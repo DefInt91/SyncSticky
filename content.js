@@ -196,12 +196,13 @@ function getEdgeReminderGroups(notes, boardSettings) {
       const tab = tabs.find((item) => item.id === note.tabId) || tabs[0];
       const statuses = Array.isArray(tab.statuses) && tab.statuses.length ? tab.statuses : tabs[0].statuses;
       const status = statuses.find((item) => item.id === note.status) || statuses[0];
+      if (!status) return;
       const key = `${tab.id}:${status.id}`;
       const existing = groups.get(key) || {
         tabId: tab.id,
         tabLabel: tab.label || 'Default',
         statusId: status.id,
-        statusLabel: status.label || 'Status',
+        statusLabel: typeof status.label === 'string' ? status.label : '',
         color: isHexColor(status.color) ? status.color : '#c98219',
         count: 0
       };

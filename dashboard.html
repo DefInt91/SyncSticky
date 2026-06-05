@@ -259,6 +259,20 @@
       flex: 0 0 calc(24% - 12px);
     }
 
+    .board-empty-state {
+      width: 100%;
+      min-height: 180px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px dashed var(--dash-line);
+      border-radius: 8px;
+      background: rgba(255,255,255,0.58);
+      color: var(--dash-muted);
+      font-size: 14px;
+      font-weight: 800;
+    }
+
     .todo-column[data-status="discussion"] { border-top: 5px solid var(--dash-amber); }
     .todo-column[data-status="waiting"] { border-top: 5px solid var(--dash-rust); }
     .todo-column[data-status="doing"] { border-top: 5px solid var(--dash-teal); }

@@ -60,7 +60,7 @@ function normalizeBoardSettings(settings) {
   const normalizedTabs = tabs.map((tab, index) => ({
     id: String(tab.id || createId('tab')),
     label: String(tab.label || `Tab ${index + 1}`),
-    statuses: normalizeStatuses(tab.statuses || legacyStatuses)
+    statuses: normalizeStatuses(Array.isArray(tab.statuses) ? tab.statuses : legacyStatuses)
   }));
   const activeTabId = normalizedTabs.some((tab) => tab.id === settings?.activeTabId)
     ? settings.activeTabId
@@ -73,10 +73,10 @@ function normalizeBoardSettings(settings) {
 }
 
 function normalizeStatuses(statuses) {
-  const sourceStatuses = Array.isArray(statuses) && statuses.length ? statuses : DEFAULT_STATUSES;
+  const sourceStatuses = Array.isArray(statuses) ? statuses : DEFAULT_STATUSES;
   return sourceStatuses.map((status, index) => ({
     id: String(status.id || createId('status')),
-    label: String(status.label || `Status ${index + 1}`),
+    label: typeof status.label === 'string' ? status.label : `Status ${index + 1}`,
     color: isHexColor(status.color) ? status.color : DEFAULT_STATUSES[index % DEFAULT_STATUSES.length].color,
     width: normalizeColumnWidth(status.width),
     height: Number.isFinite(status.height) && status.height > 0 ? status.height : DEFAULT_COLUMN_HEIGHT
@@ -122,11 +122,11 @@ function migrateNotesToSettings(notes) {
     const tabExists = boardSettings.tabs.some((tab) => tab.id === note.tabId);
     const nextTabId = tabExists ? note.tabId : firstTab;
     const tabStatuses = getStatusesForTab(nextTabId);
-    const firstStatus = tabStatuses[0].id;
+    const firstStatus = tabStatuses[0]?.id || '';
     const statusExists = tabStatuses.some((status) => status.id === note.status);
     return {
       ...note,
-      status: statusExists ? note.status : firstStatus,
+      status: statusExists || !firstStatus ? note.status : firstStatus,
       tabId: nextTabId
     };
   });
@@ -156,7 +156,8 @@ function getActiveStatuses() {
 }
 
 function getStatusesForTab(tabId) {
-  return boardSettings.tabs.find((tab) => tab.id === tabId)?.statuses || getActiveStatuses();
+  const statuses = boardSettings.tabs.find((tab) => tab.id === tabId)?.statuses;
+  return Array.isArray(statuses) ? statuses : getActiveStatuses();
 }
 
 function renderTabBar() {
@@ -251,6 +252,14 @@ function renderStatusEditor() {
 function renderTodoBoard() {
   const board = document.getElementById('todo-board');
   board.innerHTML = '';
+
+  if (!getActiveStatuses().length) {
+    const emptyState = document.createElement('div');
+    emptyState.className = 'board-empty-state';
+    emptyState.innerText = 'Add a status to start this tab.';
+    board.appendChild(emptyState);
+    return;
+  }
 
   getActiveStatuses().forEach((status) => {
     const column = document.createElement('section');
@@ -352,7 +361,7 @@ function addTab() {
   const tab = {
     id: createId('tab'),
     label: 'New Tab',
-    statuses: DEFAULT_STATUSES.map((status) => ({ ...status, id: createId('status') }))
+    statuses: []
   };
   boardSettings.tabs.push(tab);
   boardSettings.activeTabId = tab.id;
@@ -373,7 +382,7 @@ function removeTab(tabId) {
 function addStatus() {
   const status = {
     id: createId('status'),
-    label: 'New Status',
+    label: '',
     color: '#3b82f6',
     width: DEFAULT_COLUMN_WIDTH,
     height: DEFAULT_COLUMN_HEIGHT
@@ -395,6 +404,10 @@ function removeStatus(statusId) {
 
 function createNoteData(targetUrl) {
   const activeStatuses = getActiveStatuses();
+  if (!activeStatuses.length) {
+    alert('Please add a status before creating a note.');
+    return;
+  }
   const newNote = {
     id: Date.now().toString(),
     content: '',

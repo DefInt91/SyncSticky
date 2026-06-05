@@ -22,6 +22,29 @@ function clearReminder(noteId) {
   chrome.alarms.clear(getAlarmName(noteId));
 }
 
+function canInjectIntoUrl(url) {
+  return /^https?:\/\//i.test(url || '');
+}
+
+function injectContentIntoExistingTabs() {
+  chrome.tabs.query({}, (tabs) => {
+    tabs
+      .filter((tab) => tab.id && canInjectIntoUrl(tab.url))
+      .forEach((tab) => {
+        chrome.scripting.insertCSS({
+          target: { tabId: tab.id },
+          files: ['style.css']
+        }, () => {
+          if (chrome.runtime.lastError) return;
+          chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            files: ['content.js']
+          });
+        });
+      });
+  });
+}
+
 function syncReminderAlarms() {
   chrome.storage.sync.get(['notes'], (result) => {
     const notes = result.notes || [];
@@ -71,7 +94,10 @@ chrome.runtime.onMessage.addListener((message) => {
   }
 });
 
-chrome.runtime.onInstalled.addListener(syncReminderAlarms);
+chrome.runtime.onInstalled.addListener(() => {
+  syncReminderAlarms();
+  injectContentIntoExistingTabs();
+});
 chrome.runtime.onStartup.addListener(syncReminderAlarms);
 
 chrome.storage.onChanged.addListener((changes, area) => {
