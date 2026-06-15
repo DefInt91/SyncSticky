@@ -5,12 +5,13 @@ const LOCAL_SAVE_IGNORE_MS = 500;
 const FLOATING_BUTTON_POSITION_KEY = 'floatingButtonPosition';
 const EDGE_BAR_SETTINGS_KEY = 'edgeReminderBarSettings';
 const EDGE_BAR_ID = 'syncsticky-edge-reminder-bar';
+const APP_SETTINGS_KEY = 'appSettings';
 const DEFAULT_TAB_ID = 'default';
 const DEFAULT_NOTE_STATUS = 'discussion';
 let lastLocalSaveAt = 0;
 
 window.addEventListener('load', () => {
-  createFloatingButton();
+  refreshFloatingButton();
   loadPageNotes();
   loadEdgeReminderBar();
 });
@@ -27,6 +28,10 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'sync' && changes.boardSettings) {
     loadEdgeReminderBar();
   }
+
+  if (area === 'sync' && changes.appSettings) {
+    refreshFloatingButton();
+  }
 });
 
 function removeAllRenderedNotes() {
@@ -36,6 +41,29 @@ function removeAllRenderedNotes() {
     }
     card.remove();
   });
+}
+
+function getTimestamp() {
+  return new Date().toISOString();
+}
+
+function refreshFloatingButton() {
+  chrome.storage.sync.get([APP_SETTINGS_KEY], (result) => {
+    const settings = normalizeAppSettings(result[APP_SETTINGS_KEY]);
+    const existing = document.getElementById('syncsticky-add-button');
+    if (!settings.addButtonEnabled) {
+      if (existing) existing.remove();
+      return;
+    }
+    createFloatingButton();
+  });
+}
+
+function normalizeAppSettings(settings) {
+  return {
+    addButtonEnabled: settings?.addButtonEnabled !== false,
+    updatedAt: settings?.updatedAt || ''
+  };
 }
 
 function createFloatingButton() {
@@ -105,6 +133,7 @@ function setupFloatingButtonPosition(btn) {
       top: btn.offsetTop
     }, btn);
     applyFloatingButtonPosition(btn, position);
+    position.updatedAt = getTimestamp();
     chrome.storage.local.set({ [FLOATING_BUTTON_POSITION_KEY]: position });
 
     if (!wasDragged) {
@@ -115,11 +144,20 @@ function setupFloatingButtonPosition(btn) {
   window.addEventListener('resize', () => {
     const position = restoreSnappedPosition({
       left: btn.offsetLeft,
-      top: btn.offsetTop
+      top: btn.offsetTop,
+      edge: resultEdgeFromElement(btn)
     }, defaultPosition, btn);
+    position.updatedAt = getTimestamp();
     applyFloatingButtonPosition(btn, position);
     chrome.storage.local.set({ [FLOATING_BUTTON_POSITION_KEY]: position });
   });
+}
+
+function resultEdgeFromElement(element) {
+  return getSnappedPosition({
+    left: element.offsetLeft,
+    top: element.offsetTop
+  }, element).edge;
 }
 
 function getDefaultFloatingButtonPosition(btn) {
@@ -132,16 +170,25 @@ function getDefaultFloatingButtonPosition(btn) {
 function normalizeFloatingButtonPosition(position, fallbackPosition, element) {
   const rawLeft = Number.isFinite(position?.left) ? position.left : fallbackPosition.left;
   const rawTop = Number.isFinite(position?.top) ? position.top : fallbackPosition.top;
+  const elementWidth = getElementDimension(element, 'width');
+  const elementHeight = getElementDimension(element, 'height');
   return {
-    left: Math.min(Math.max(rawLeft, 0), window.innerWidth - element.offsetWidth),
-    top: Math.min(Math.max(rawTop, 0), window.innerHeight - element.offsetHeight)
+    left: Math.min(Math.max(rawLeft, 0), Math.max(window.innerWidth - elementWidth, 0)),
+    top: Math.min(Math.max(rawTop, 0), Math.max(window.innerHeight - elementHeight, 0))
   };
+}
+
+function getElementDimension(element, property) {
+  const offsetValue = property === 'width' ? element.offsetWidth : element.offsetHeight;
+  if (offsetValue > 0) return offsetValue;
+  const styleValue = parseInt(element.style[property], 10);
+  return Number.isFinite(styleValue) && styleValue > 0 ? styleValue : 0;
 }
 
 function getSnappedPosition(position, element) {
   const normalized = normalizeFloatingButtonPosition(position, position, element);
-  const maxLeft = Math.max(window.innerWidth - element.offsetWidth, 0);
-  const maxTop = Math.max(window.innerHeight - element.offsetHeight, 0);
+  const maxLeft = Math.max(window.innerWidth - getElementDimension(element, 'width'), 0);
+  const maxTop = Math.max(window.innerHeight - getElementDimension(element, 'height'), 0);
   const distances = [
     { edge: 'left', value: normalized.left },
     { edge: 'right', value: maxLeft - normalized.left },
@@ -160,8 +207,8 @@ function getSnappedPosition(position, element) {
 
 function restoreSnappedPosition(position, fallbackPosition, element) {
   const normalized = normalizeFloatingButtonPosition(position, fallbackPosition, element);
-  const maxLeft = Math.max(window.innerWidth - element.offsetWidth, 0);
-  const maxTop = Math.max(window.innerHeight - element.offsetHeight, 0);
+  const maxLeft = Math.max(window.innerWidth - getElementDimension(element, 'width'), 0);
+  const maxTop = Math.max(window.innerHeight - getElementDimension(element, 'height'), 0);
 
   if (position?.edge === 'left') return { ...normalized, left: 0, edge: 'left' };
   if (position?.edge === 'right') return { ...normalized, left: maxLeft, edge: 'right' };
@@ -173,6 +220,10 @@ function restoreSnappedPosition(position, fallbackPosition, element) {
 function applyFloatingButtonPosition(element, position) {
   element.style.left = `${position.left}px`;
   element.style.top = `${position.top}px`;
+}
+
+function getBoundedFixedPosition(position, element) {
+  return normalizeFloatingButtonPosition(position, position, element);
 }
 
 function loadEdgeReminderBar() {
@@ -226,6 +277,7 @@ function normalizeEdgeBarSettings(settings) {
 }
 
 function saveEdgeBarSettings(settings) {
+  settings.updatedAt = getTimestamp();
   chrome.storage.local.set({ [EDGE_BAR_SETTINGS_KEY]: settings });
 }
 
@@ -326,6 +378,9 @@ function renderEdgeReminderBar(groups, settings) {
       edge: 'right'
     }, bar);
     applyFloatingButtonPosition(bar, snappedPosition);
+    settings.left = snappedPosition.left;
+    settings.top = snappedPosition.top;
+    settings.edge = snappedPosition.edge;
     setupEdgeBarDrag(bar, settings);
   }
 }
@@ -427,7 +482,8 @@ function createNoteData(targetUrl) {
       edgeReminder: false,
       minimized: false,
       minimizedX: 12,
-      minimizedY: 12
+      minimizedY: 12,
+      updatedAt: getTimestamp()
     };
     saveNoteToStorage(newNote);
     renderNote(newNote);
@@ -440,6 +496,7 @@ function saveNoteToStorage(noteData) {
     const notes = result.notes || [];
     const index = notes.findIndex((note) => note.id === noteData.id);
     const normalizedNote = normalizeNote(noteData);
+    normalizedNote.updatedAt = getTimestamp();
     if (index > -1) {
       notes[index] = { ...normalizedNote };
     } else {
@@ -546,8 +603,12 @@ function renderMinimizedNote(data) {
   const card = document.createElement('div');
   card.className = 'sticky-note-card sticky-note-minimized';
   card.id = data.id;
-  card.style.left = `${data.minimizedX}px`;
-  card.style.top = `${data.minimizedY}px`;
+  const initialPosition = getBoundedFixedPosition({
+    left: data.minimizedX,
+    top: data.minimizedY
+  }, card);
+  card.style.left = `${initialPosition.left}px`;
+  card.style.top = `${initialPosition.top}px`;
   card.style.backgroundColor = data.color;
   card.style.position = 'fixed';
   card.style.zIndex = data.zIndex || 10000;
@@ -574,6 +635,13 @@ function renderMinimizedNote(data) {
   card.appendChild(summary);
   card.appendChild(restoreBtn);
   document.body.appendChild(card);
+  const boundedPosition = getBoundedFixedPosition({
+    left: card.offsetLeft,
+    top: card.offsetTop
+  }, card);
+  applyFloatingButtonPosition(card, boundedPosition);
+  data.minimizedX = boundedPosition.left;
+  data.minimizedY = boundedPosition.top;
 
   setupMinimizedNoteDrag(card, data, () => isDeleted);
 
@@ -589,6 +657,18 @@ function renderMinimizedNote(data) {
   card.cleanupNote = () => {
     isDeleted = true;
   };
+
+  window.addEventListener('resize', () => {
+    if (isDeleted) return;
+    const position = getBoundedFixedPosition({
+      left: card.offsetLeft,
+      top: card.offsetTop
+    }, card);
+    applyFloatingButtonPosition(card, position);
+    data.minimizedX = position.left;
+    data.minimizedY = position.top;
+    saveNoteToStorage(data);
+  });
 }
 
 function setupMinimizedNoteDrag(card, data, getIsDeleted) {
@@ -637,10 +717,14 @@ function renderExpandedNote(data) {
   const card = document.createElement('div');
   card.className = 'sticky-note-card';
   card.id = data.id;
-  card.style.left = `${data.x}px`;
-  card.style.top = `${data.y}px`;
   card.style.width = `${data.width}px`;
   card.style.height = `${data.height}px`;
+  const initialPosition = getBoundedFixedPosition({
+    left: data.x,
+    top: data.y
+  }, card);
+  card.style.left = `${initialPosition.left}px`;
+  card.style.top = `${initialPosition.top}px`;
   card.style.backgroundColor = data.color;
   card.style.position = 'fixed';
   card.style.zIndex = data.zIndex || 10000;
@@ -745,6 +829,17 @@ function renderExpandedNote(data) {
   const footer = document.createElement('div');
   footer.className = 'sticky-footer';
 
+  const reminderButton = document.createElement('button');
+  reminderButton.type = 'button';
+  reminderButton.className = `sticky-reminder-btn${data.reminder ? ' active' : ''}`;
+  reminderButton.innerText = data.reminder ? 'A!' : 'A';
+  reminderButton.title = data.reminder ? `Reminder: ${getCountdownText(data.reminder) || data.reminder}` : 'Set reminder';
+  reminderButton.onmousedown = (event) => event.stopPropagation();
+
+  const reminderPanel = document.createElement('div');
+  reminderPanel.className = 'sticky-reminder-panel';
+  reminderPanel.hidden = true;
+
   const dateInput = document.createElement('input');
   dateInput.type = 'datetime-local';
   dateInput.className = 'date-picker';
@@ -752,15 +847,31 @@ function renderExpandedNote(data) {
   dateInput.value = data.reminder || '';
   dateInput.onmousedown = (event) => event.stopPropagation();
 
+  const clearReminderBtn = document.createElement('button');
+  clearReminderBtn.type = 'button';
+  clearReminderBtn.className = 'sticky-reminder-clear';
+  clearReminderBtn.innerText = 'Clear';
+  clearReminderBtn.disabled = !data.reminder;
+  clearReminderBtn.onmousedown = (event) => event.stopPropagation();
+
   const countdownDiv = document.createElement('div');
   countdownDiv.className = 'countdown-text';
 
   const updateTimer = () => {
     countdownDiv.innerText = getCountdownText(dateInput.value);
+    reminderButton.classList.toggle('active', Boolean(dateInput.value));
+    reminderButton.innerText = dateInput.value ? 'A!' : 'A';
+    reminderButton.title = dateInput.value ? `Reminder: ${countdownDiv.innerText || dateInput.value}` : 'Set reminder';
+    clearReminderBtn.disabled = !dateInput.value;
   };
 
   updateTimer();
   timerInterval = setInterval(updateTimer, 60000);
+
+  reminderButton.onclick = (event) => {
+    event.stopPropagation();
+    reminderPanel.hidden = !reminderPanel.hidden;
+  };
 
   dateInput.onchange = () => {
     if (isDeleted) return;
@@ -775,8 +886,20 @@ function renderExpandedNote(data) {
     }
   };
 
-  footer.appendChild(dateInput);
-  footer.appendChild(countdownDiv);
+  clearReminderBtn.onclick = () => {
+    if (isDeleted) return;
+    dateInput.value = '';
+    data.reminder = '';
+    saveNoteToStorage(data);
+    clearReminder(data.id);
+    updateTimer();
+  };
+
+  reminderPanel.appendChild(dateInput);
+  reminderPanel.appendChild(clearReminderBtn);
+  reminderPanel.appendChild(countdownDiv);
+  footer.appendChild(reminderButton);
+  footer.appendChild(reminderPanel);
 
   card.appendChild(header);
   card.appendChild(content);
@@ -800,8 +923,11 @@ function renderExpandedNote(data) {
 
   window.addEventListener('mousemove', (event) => {
     if (!isDragging) return;
-    card.style.left = `${initialLeft + event.clientX - startX}px`;
-    card.style.top = `${initialTop + event.clientY - startY}px`;
+    const position = getBoundedFixedPosition({
+      left: initialLeft + event.clientX - startX,
+      top: initialTop + event.clientY - startY
+    }, card);
+    applyFloatingButtonPosition(card, position);
   });
 
   window.addEventListener('mouseup', () => {
@@ -820,7 +946,26 @@ function renderExpandedNote(data) {
     }
     data.width = parseInt(card.style.width, 10);
     data.height = parseInt(card.style.height, 10);
+    const position = getBoundedFixedPosition({
+      left: card.offsetLeft,
+      top: card.offsetTop
+    }, card);
+    applyFloatingButtonPosition(card, position);
+    data.x = position.left;
+    data.y = position.top;
     saveSize();
   });
   resizeObserver.observe(card);
+
+  window.addEventListener('resize', () => {
+    if (isDeleted) return;
+    const position = getBoundedFixedPosition({
+      left: card.offsetLeft,
+      top: card.offsetTop
+    }, card);
+    applyFloatingButtonPosition(card, position);
+    data.x = position.left;
+    data.y = position.top;
+    saveNoteToStorage(data);
+  });
 }

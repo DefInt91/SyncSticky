@@ -501,7 +501,8 @@
       border-radius: 8px;
       box-shadow: 0 18px 42px rgba(0,0,0,0.28);
       z-index: 20000;
-      width: 320px;
+      width: 420px;
+      max-width: calc(100vw - 32px);
       text-align: left;
       font-family: "Bahnschrift", "Aptos", "Segoe UI", sans-serif;
     }
@@ -527,7 +528,18 @@
       text-align: center;
       margin-top: 20px;
       display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
       justify-content: space-between;
+    }
+
+    .settings-check-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--dash-ink);
+      font-size: 13px;
+      font-weight: 800;
     }
 
     #settings-modal button {
@@ -558,7 +570,7 @@
       <div class="toolbar-actions">
         <button class="toolbar-btn" id="btn-add-note" type="button">Add Note</button>
         <button class="toolbar-btn secondary" id="btn-board-settings" type="button">Board</button>
-        <button class="toolbar-btn secondary" id="fab-settings" type="button">BG</button>
+        <button class="toolbar-btn secondary" id="fab-settings" type="button">Settings</button>
       </div>
     </header>
 
@@ -582,20 +594,32 @@
 
   <div id="modal-overlay"></div>
   <div id="settings-modal">
-    <h3>Background Settings</h3>
+    <h3>Settings</h3>
 
-    <h4>Option A: Upload image</h4>
+    <h4>Background image</h4>
     <input type="file" id="bg-file-input" accept="image/*">
     <p style="font-size: 11px; color: #999; margin: 2px 0;">Images are saved locally in this browser. Maximum size: 5 MB.</p>
 
+    <input type="text" id="bg-url-input" placeholder="Enter image URL...">
+
     <hr style="border: 0; border-top: 1px dashed #ddd; margin: 15px 0;">
 
-    <h4>Option B: Image URL</h4>
-    <input type="text" id="bg-url-input" placeholder="Enter image URL...">
+    <h4>Controls</h4>
+    <label class="settings-check-row">
+      <input type="checkbox" id="add-button-enabled-input">
+      <span>Show add button on web pages</span>
+    </label>
+
+    <hr style="border: 0; border-top: 1px dashed #ddd; margin: 15px 0;">
+
+    <h4>Backup</h4>
+    <input type="file" id="import-file-input" accept="application/json">
 
     <div class="btn-group">
       <button id="btn-save-bg">Save URL</button>
       <button id="btn-clear-bg">Clear</button>
+      <button id="btn-export-data">Export</button>
+      <button id="btn-import-data">Import</button>
       <button id="btn-close-bg">Close</button>
     </div>
   </div>

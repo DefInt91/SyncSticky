@@ -23,6 +23,8 @@
   resize: both;
   overflow: hidden;
   font-family: "Bahnschrift", "Aptos", "Segoe UI", sans-serif;
+  max-width: 100vw;
+  max-height: 100vh;
 }
 
 .sticky-note-minimized {
@@ -127,6 +129,53 @@
   flex-direction: column;
   gap: 3px;
   font-size: 12px;
+  position: relative;
+}
+
+.sticky-reminder-btn {
+  width: 28px;
+  height: 26px;
+  border: 1px solid var(--ss-line);
+  border-radius: 6px;
+  background: rgba(255,255,255,0.64);
+  color: var(--ss-muted);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 900;
+  align-self: flex-end;
+}
+
+.sticky-reminder-btn.active {
+  background: var(--ss-accent);
+  border-color: var(--ss-accent);
+  color: white;
+}
+
+.sticky-reminder-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.sticky-reminder-panel[hidden] {
+  display: none;
+}
+
+.sticky-reminder-clear {
+  min-height: 24px;
+  border: 1px solid var(--ss-line);
+  border-radius: 6px;
+  background: rgba(255,255,255,0.68);
+  color: var(--ss-ink);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.sticky-reminder-clear:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
 }
 
 .date-picker {
@@ -152,6 +201,7 @@
 }
 
 .countdown-text {
+  grid-column: 1 / -1;
   color: var(--ss-danger);
   font-weight: 800;
   font-size: 11px;

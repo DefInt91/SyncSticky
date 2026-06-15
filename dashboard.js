@@ -4,6 +4,13 @@ const DEFAULT_TAB_ID = 'default';
 const DEFAULT_NOTE_STATUS = 'discussion';
 const DEFAULT_COLUMN_WIDTH = 24;
 const DEFAULT_COLUMN_HEIGHT = 520;
+const APP_SETTINGS_KEY = 'appSettings';
+const LOCAL_EXPORT_KEYS = [
+  'customBgImage',
+  'customBgImageUpdatedAt',
+  'floatingButtonPosition',
+  'edgeReminderBarSettings'
+];
 const DEFAULT_STATUSES = [
   { id: 'discussion', label: 'Discussion', color: '#c98219', width: DEFAULT_COLUMN_WIDTH, height: DEFAULT_COLUMN_HEIGHT },
   { id: 'waiting', label: 'WAITING', color: '#a33a2f', width: DEFAULT_COLUMN_WIDTH, height: DEFAULT_COLUMN_HEIGHT },
@@ -17,6 +24,15 @@ const DEFAULT_TABS = [
 let lastLocalSaveAt = 0;
 let boardSettings = getDefaultBoardSettings();
 let currentNotes = [];
+
+function getTimestamp() {
+  return new Date().toISOString();
+}
+
+function getTimeValue(value) {
+  const time = Date.parse(value || '');
+  return Number.isFinite(time) ? time : 0;
+}
 
 window.addEventListener('load', () => {
   loadDashboardData();
@@ -44,7 +60,15 @@ chrome.storage.onChanged.addListener((changes, area) => {
 function getDefaultBoardSettings() {
   return {
     tabs: DEFAULT_TABS.map((tab) => ({ ...tab })),
-    activeTabId: DEFAULT_TAB_ID
+    activeTabId: DEFAULT_TAB_ID,
+    updatedAt: ''
+  };
+}
+
+function normalizeAppSettings(settings) {
+  return {
+    addButtonEnabled: settings?.addButtonEnabled !== false,
+    updatedAt: settings?.updatedAt || ''
   };
 }
 
@@ -68,7 +92,8 @@ function normalizeBoardSettings(settings) {
 
   return {
     tabs: normalizedTabs,
-    activeTabId
+    activeTabId,
+    updatedAt: settings?.updatedAt || ''
   };
 }
 
@@ -424,13 +449,15 @@ function createNoteData(targetUrl) {
     edgeReminder: false,
     minimized: false,
     minimizedX: 12,
-    minimizedY: 12
+    minimizedY: 12,
+    updatedAt: getTimestamp()
   };
   saveNoteToStorage(newNote, loadDashboardData);
 }
 
 function saveBoardSettings(afterSave) {
   lastLocalSaveAt = Date.now();
+  boardSettings.updatedAt = getTimestamp();
   chrome.storage.sync.set({ boardSettings }, () => {
     if (typeof afterSave === 'function') afterSave();
   });
@@ -438,6 +465,7 @@ function saveBoardSettings(afterSave) {
 
 function saveAllData(afterSave) {
   lastLocalSaveAt = Date.now();
+  boardSettings.updatedAt = getTimestamp();
   chrome.storage.sync.set({ boardSettings, notes: currentNotes }, () => {
     if (typeof afterSave === 'function') afterSave();
   });
@@ -448,6 +476,7 @@ function saveNoteToStorage(noteData, afterSave) {
   chrome.storage.sync.get(['notes'], (result) => {
     const notes = (result.notes || []).map(normalizeNote);
     const normalizedNote = normalizeNote(noteData);
+    normalizedNote.updatedAt = getTimestamp();
     const index = notes.findIndex((note) => note.id === normalizedNote.id);
     if (index > -1) {
       notes[index] = { ...normalizedNote };
@@ -755,6 +784,132 @@ function renderTodoCard(note) {
   return card;
 }
 
+function exportAllData() {
+  chrome.storage.sync.get(['notes', 'boardSettings', 'globalSettings', APP_SETTINGS_KEY], (syncData) => {
+    chrome.storage.local.get(LOCAL_EXPORT_KEYS, (localData) => {
+      const payload = {
+        schemaVersion: 1,
+        exportedAt: getTimestamp(),
+        extensionVersion: chrome.runtime.getManifest().version,
+        sync: {
+          notes: syncData.notes || [],
+          boardSettings: syncData.boardSettings || null,
+          globalSettings: syncData.globalSettings || null,
+          appSettings: normalizeAppSettings(syncData[APP_SETTINGS_KEY])
+        },
+        local: {
+          customBgImage: localData.customBgImage || null,
+          customBgImageUpdatedAt: localData.customBgImageUpdatedAt || '',
+          floatingButtonPosition: localData.floatingButtonPosition || null,
+          edgeReminderBarSettings: localData.edgeReminderBarSettings || null
+        }
+      };
+      downloadJson(payload);
+    });
+  });
+}
+
+function downloadJson(payload) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `syncsticky-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function importAllData(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (event) => {
+    let payload;
+    try {
+      payload = JSON.parse(event.target.result);
+    } catch (error) {
+      alert('Invalid import file.');
+      return;
+    }
+    mergeImportedData(payload);
+  };
+  reader.readAsText(file);
+}
+
+function mergeImportedData(payload) {
+  const importedSync = payload?.sync || {};
+  const importedLocal = payload?.local || {};
+
+  chrome.storage.sync.get(['notes', 'boardSettings', 'globalSettings', APP_SETTINGS_KEY], (currentSync) => {
+    const nextNotes = mergeNotesByUpdatedAt(currentSync.notes || [], importedSync.notes || []);
+    const nextBoardSettings = pickNewerObject(importedSync.boardSettings, currentSync.boardSettings);
+    const nextGlobalSettings = pickNewerObject(importedSync.globalSettings, currentSync.globalSettings);
+    const nextAppSettings = pickNewerObject(
+      importedSync.appSettings ? normalizeAppSettings(importedSync.appSettings) : null,
+      normalizeAppSettings(currentSync[APP_SETTINGS_KEY])
+    );
+
+    const syncUpdate = {
+      notes: nextNotes,
+      boardSettings: nextBoardSettings || currentSync.boardSettings,
+      [APP_SETTINGS_KEY]: nextAppSettings
+    };
+    if (nextGlobalSettings) syncUpdate.globalSettings = nextGlobalSettings;
+
+    chrome.storage.sync.set(syncUpdate, () => {
+      mergeImportedLocalData(importedLocal, () => {
+        loadDashboardData();
+        loadBackgroundSettings();
+        alert('Import complete.');
+      });
+    });
+  });
+}
+
+function mergeNotesByUpdatedAt(currentNotesInput, importedNotesInput) {
+  const notesById = new Map();
+  currentNotesInput.forEach((note) => {
+    if (note.id) notesById.set(note.id, note);
+  });
+  importedNotesInput.forEach((note) => {
+    if (!note.id) return;
+    const current = notesById.get(note.id);
+    if (!current || getTimeValue(note.updatedAt) > getTimeValue(current.updatedAt)) {
+      notesById.set(note.id, note);
+    }
+  });
+  return Array.from(notesById.values());
+}
+
+function pickNewerObject(importedObject, currentObject) {
+  if (!importedObject) return currentObject || null;
+  if (!currentObject) return importedObject;
+  return getTimeValue(importedObject.updatedAt) > getTimeValue(currentObject.updatedAt)
+    ? importedObject
+    : currentObject;
+}
+
+function mergeImportedLocalData(importedLocal, afterMerge) {
+  chrome.storage.local.get(LOCAL_EXPORT_KEYS, (currentLocal) => {
+    const localUpdate = {};
+
+    if (importedLocal.customBgImage && getTimeValue(importedLocal.customBgImageUpdatedAt) > getTimeValue(currentLocal.customBgImageUpdatedAt)) {
+      localUpdate.customBgImage = importedLocal.customBgImage;
+      localUpdate.customBgImageUpdatedAt = importedLocal.customBgImageUpdatedAt || getTimestamp();
+    }
+
+    ['floatingButtonPosition', 'edgeReminderBarSettings'].forEach((key) => {
+      const nextValue = pickNewerObject(importedLocal[key], currentLocal[key]);
+      if (nextValue) localUpdate[key] = nextValue;
+    });
+
+    if (Object.keys(localUpdate).length) {
+      chrome.storage.local.set(localUpdate, afterMerge);
+      return;
+    }
+    afterMerge();
+  });
+}
+
 function setupSettingsUI() {
   const modal = document.getElementById('settings-modal');
   const overlay = document.getElementById('modal-overlay');
@@ -766,8 +921,12 @@ function setupSettingsUI() {
   const btnSaveUrl = document.getElementById('btn-save-bg');
   const btnClear = document.getElementById('btn-clear-bg');
   const btnClose = document.getElementById('btn-close-bg');
+  const btnExport = document.getElementById('btn-export-data');
+  const btnImport = document.getElementById('btn-import-data');
   const inputUrl = document.getElementById('bg-url-input');
   const inputFile = document.getElementById('bg-file-input');
+  const inputImport = document.getElementById('import-file-input');
+  const inputAddButtonEnabled = document.getElementById('add-button-enabled-input');
   const settingsPanel = document.getElementById('board-settings-panel');
 
   btnAddNote.onclick = () => {
@@ -784,10 +943,12 @@ function setupSettingsUI() {
   btnSettings.onclick = () => {
     modal.style.display = 'block';
     overlay.style.display = 'block';
-    chrome.storage.sync.get(['globalSettings'], (res) => {
+    chrome.storage.sync.get(['globalSettings', APP_SETTINGS_KEY], (res) => {
       inputUrl.value = res.globalSettings?.bgUrl || '';
+      inputAddButtonEnabled.checked = normalizeAppSettings(res[APP_SETTINGS_KEY]).addButtonEnabled;
     });
     inputFile.value = '';
+    inputImport.value = '';
   };
 
   const closeModal = () => {
@@ -808,7 +969,10 @@ function setupSettingsUI() {
     const reader = new FileReader();
     reader.onload = (readerEvent) => {
       const base64String = readerEvent.target.result;
-      chrome.storage.local.set({ customBgImage: base64String }, () => {
+      chrome.storage.local.set({
+        customBgImage: base64String,
+        customBgImageUpdatedAt: getTimestamp()
+      }, () => {
         applyBackground(base64String);
         closeModal();
       });
@@ -824,17 +988,32 @@ function setupSettingsUI() {
     }
 
     chrome.storage.local.remove(['customBgImage'], () => {
-      chrome.storage.sync.set({ globalSettings: { bgUrl: url } });
+      chrome.storage.sync.set({ globalSettings: { bgUrl: url, updatedAt: getTimestamp() } });
       applyBackground(url);
       closeModal();
     });
   };
 
   btnClear.onclick = () => {
-    chrome.storage.local.remove(['customBgImage']);
+    chrome.storage.local.remove(['customBgImage', 'customBgImageUpdatedAt']);
     chrome.storage.sync.remove(['globalSettings']);
     applyBackground(null);
     closeModal();
+  };
+
+  inputAddButtonEnabled.onchange = () => {
+    chrome.storage.sync.set({
+      [APP_SETTINGS_KEY]: {
+        addButtonEnabled: inputAddButtonEnabled.checked,
+        updatedAt: getTimestamp()
+      }
+    });
+  };
+
+  btnExport.onclick = exportAllData;
+
+  btnImport.onclick = () => {
+    importAllData(inputImport.files[0]);
   };
 }
 
