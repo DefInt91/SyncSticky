@@ -7,11 +7,13 @@ const EDGE_BAR_SETTINGS_KEY = 'edgeReminderBarSettings';
 const EDGE_BAR_ID = 'syncsticky-edge-reminder-bar';
 const APP_SETTINGS_KEY = 'appSettings';
 const CHARACTER_LAYER_ID = 'syncsticky-character-layer';
-const CHARACTER_ASSETS = ['Character/cat_1.png'];
+const CHARACTER_LIST_PATH = 'Character/characters.json';
+const DEFAULT_CHARACTER_ASSETS = ['Character/cat_1.png'];
 const DEFAULT_TAB_ID = 'default';
 const DEFAULT_NOTE_STATUS = 'discussion';
 let lastLocalSaveAt = 0;
 let characterAnimationId = 0;
+let characterAssetsCache = null;
 
 window.addEventListener('load', () => {
   refreshFloatingButton();
@@ -421,37 +423,61 @@ function removeCharacters() {
 }
 
 function renderCharacters(count) {
-  let layer = document.getElementById(CHARACTER_LAYER_ID);
-  if (!layer) {
-    layer = document.createElement('div');
-    layer.id = CHARACTER_LAYER_ID;
-    layer.style.cssText = `
-      position: fixed;
-      inset: 0;
-      pointer-events: none;
-      z-index: 2147483645;
-      overflow: hidden;
-    `;
-    document.body.appendChild(layer);
-  }
+  loadCharacterAssets((assets) => {
+    let layer = document.getElementById(CHARACTER_LAYER_ID);
+    if (!layer) {
+      layer = document.createElement('div');
+      layer.id = CHARACTER_LAYER_ID;
+      layer.style.cssText = `
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        z-index: 2147483645;
+        overflow: hidden;
+      `;
+      document.body.appendChild(layer);
+    }
 
-  const currentCount = layer.querySelectorAll('.syncsticky-character').length;
-  for (let index = currentCount; index < count; index++) {
-    layer.appendChild(createCharacterElement(index));
-  }
-  Array.from(layer.querySelectorAll('.syncsticky-character'))
-    .slice(count)
-    .forEach((item) => item.remove());
+    const currentCount = layer.querySelectorAll('.syncsticky-character').length;
+    for (let index = currentCount; index < count; index++) {
+      layer.appendChild(createCharacterElement(index, assets));
+    }
+    Array.from(layer.querySelectorAll('.syncsticky-character'))
+      .slice(count)
+      .forEach((item) => item.remove());
 
-  if (!characterAnimationId) {
-    characterAnimationId = requestAnimationFrame(animateCharacters);
-  }
+    if (!characterAnimationId) {
+      characterAnimationId = requestAnimationFrame(animateCharacters);
+    }
+  });
 }
 
-function createCharacterElement(index) {
+function loadCharacterAssets(callback) {
+  if (characterAssetsCache) {
+    callback(characterAssetsCache);
+    return;
+  }
+
+  fetch(chrome.runtime.getURL(CHARACTER_LIST_PATH))
+    .then((response) => response.ok ? response.json() : DEFAULT_CHARACTER_ASSETS)
+    .then((items) => {
+      const list = Array.isArray(items) && items.length ? items : DEFAULT_CHARACTER_ASSETS;
+      characterAssetsCache = list
+        .filter((item) => typeof item === 'string' && item.toLowerCase().endsWith('.png'))
+        .map((item) => item.startsWith('Character/') ? item : `Character/${item}`);
+      if (!characterAssetsCache.length) characterAssetsCache = DEFAULT_CHARACTER_ASSETS;
+      callback(characterAssetsCache);
+    })
+    .catch(() => {
+      characterAssetsCache = DEFAULT_CHARACTER_ASSETS;
+      callback(characterAssetsCache);
+    });
+}
+
+function createCharacterElement(index, assets) {
   const img = document.createElement('img');
   img.className = 'syncsticky-character';
-  img.src = chrome.runtime.getURL(CHARACTER_ASSETS[index % CHARACTER_ASSETS.length]);
+  img.src = chrome.runtime.getURL(assets[index % assets.length]);
   img.alt = '';
   img.style.cssText = `
     position: fixed;
@@ -650,6 +676,7 @@ function createNoteData(targetUrl) {
     const newNote = {
       id: Date.now().toString(),
       content: '',
+      contentHtml: '',
       x: 100 + Math.random() * 50,
       y: 100 + Math.random() * 50,
       width: 250,
@@ -734,6 +761,11 @@ function linkify(text) {
   return escapedText.replace(urlRegex, (url) => {
     return `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`;
   });
+}
+
+function getNoteHtml(data) {
+  if (data.contentHtml) return data.contentHtml;
+  return linkify(data.content);
 }
 
 function stripHtml(html) {
@@ -985,7 +1017,7 @@ function renderExpandedNote(data) {
   const content = document.createElement('div');
   content.className = 'sticky-content';
   content.contentEditable = true;
-  content.innerHTML = linkify(data.content);
+  content.innerHTML = getNoteHtml(data);
 
   content.addEventListener('mousedown', (event) => {
     if (event.target.tagName === 'A') {
@@ -995,16 +1027,11 @@ function renderExpandedNote(data) {
     }
   });
 
-  content.addEventListener('focus', () => {
-    content.innerText = stripHtml(content.innerHTML);
-  });
-
   content.addEventListener('blur', () => {
     if (isDeleted) return;
-    const rawText = content.innerText;
-    data.content = rawText;
+    data.content = content.innerText;
+    data.contentHtml = content.innerHTML;
     saveNoteToStorage(data);
-    content.innerHTML = linkify(rawText);
   });
 
   const footer = document.createElement('div');

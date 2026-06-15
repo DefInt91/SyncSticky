@@ -435,25 +435,27 @@ function removeStatus(statusId) {
   saveAllData(renderDashboard);
 }
 
-function createNoteData(targetUrl) {
-  const activeStatuses = getActiveStatuses();
-  if (!activeStatuses.length) {
+function createNoteData(targetUrl, noteInput = {}) {
+  const tabId = noteInput.tabId || boardSettings.activeTabId;
+  const statuses = getStatusesForTab(tabId);
+  if (!statuses.length) {
     alert('Please add a status before creating a note.');
     return;
   }
   const newNote = {
     id: Date.now().toString(),
-    content: '',
+    content: noteInput.content || '',
+    contentHtml: noteInput.contentHtml || '',
     x: 100 + Math.random() * 50,
     y: 100 + Math.random() * 50,
     width: 250,
     height: 250,
-    color: '#fff7b1',
+    color: noteInput.color || '#fff7b1',
     url: targetUrl,
     reminder: '',
     zIndex: 10000,
-    status: activeStatuses[0].id,
-    tabId: boardSettings.activeTabId,
+    status: noteInput.status || statuses[0].id,
+    tabId,
     edgeReminder: false,
     minimized: false,
     minimizedX: 12,
@@ -559,6 +561,11 @@ function linkify(text) {
   return escapedText.replace(urlRegex, (url) => {
     return `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`;
   });
+}
+
+function getNoteHtml(note) {
+  if (note.contentHtml) return note.contentHtml;
+  return linkify(note.content);
 }
 
 function stripHtml(html) {
@@ -674,10 +681,11 @@ function renderTodoCard(note) {
   const content = document.createElement('div');
   content.className = 'todo-content';
   content.contentEditable = true;
-  content.innerHTML = linkify(note.content);
+  content.innerHTML = getNoteHtml(note);
 
   const saveContent = debounce(() => {
     note.content = content.innerText;
+    note.contentHtml = content.innerHTML;
     saveNoteToStorage(note);
   }, SAVE_DEBOUNCE_MS);
 
@@ -689,14 +697,11 @@ function renderTodoCard(note) {
     }
   });
 
-  content.addEventListener('focus', () => {
-    content.innerText = stripHtml(content.innerHTML);
-  });
-
   content.addEventListener('input', saveContent);
 
   content.addEventListener('blur', () => {
     note.content = content.innerText;
+    note.contentHtml = content.innerHTML;
     saveNoteToStorage(note, loadDashboardData);
   });
 
@@ -790,6 +795,103 @@ function renderTodoCard(note) {
   card.appendChild(meta);
   card.appendChild(actions);
   return card;
+}
+
+function openCreateNoteDialog() {
+  if (document.getElementById('create-note-modal')) return;
+
+  const overlay = document.createElement('div');
+  overlay.id = 'create-note-overlay';
+  overlay.className = 'create-note-overlay';
+
+  const modal = document.createElement('div');
+  modal.id = 'create-note-modal';
+  modal.className = 'create-note-modal';
+
+  const title = document.createElement('h3');
+  title.innerText = 'Add Note';
+
+  const tabSelect = document.createElement('select');
+  tabSelect.className = 'create-note-field';
+  boardSettings.tabs.forEach((tab) => {
+    const option = document.createElement('option');
+    option.value = tab.id;
+    option.innerText = tab.label;
+    option.selected = tab.id === boardSettings.activeTabId;
+    tabSelect.appendChild(option);
+  });
+
+  const statusSelect = document.createElement('select');
+  statusSelect.className = 'create-note-field';
+
+  const fillStatuses = () => {
+    statusSelect.innerHTML = '';
+    getStatusesForTab(tabSelect.value).forEach((status) => {
+      const option = document.createElement('option');
+      option.value = status.id;
+      option.innerText = status.label;
+      statusSelect.appendChild(option);
+    });
+  };
+  fillStatuses();
+
+  const colorInput = document.createElement('input');
+  colorInput.type = 'color';
+  colorInput.className = 'create-note-color';
+  colorInput.value = '#fff7b1';
+
+  const editor = document.createElement('div');
+  editor.className = 'create-note-editor';
+  editor.contentEditable = true;
+  editor.dataset.placeholder = 'Paste or type note content...';
+
+  const actions = document.createElement('div');
+  actions.className = 'create-note-actions';
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button';
+  cancelBtn.innerText = 'Cancel';
+
+  const createBtn = document.createElement('button');
+  createBtn.type = 'button';
+  createBtn.innerText = 'Create';
+  createBtn.className = 'primary';
+
+  const closeDialog = () => {
+    overlay.remove();
+    modal.remove();
+  };
+
+  tabSelect.onchange = fillStatuses;
+  cancelBtn.onclick = closeDialog;
+  overlay.onclick = closeDialog;
+
+  createBtn.onclick = () => {
+    if (!statusSelect.value) {
+      alert('Please add a status before creating a note.');
+      return;
+    }
+    createNoteData('dashboard', {
+      tabId: tabSelect.value,
+      status: statusSelect.value,
+      color: colorInput.value,
+      content: editor.innerText,
+      contentHtml: editor.innerHTML
+    });
+    closeDialog();
+  };
+
+  actions.appendChild(cancelBtn);
+  actions.appendChild(createBtn);
+  modal.appendChild(title);
+  modal.appendChild(tabSelect);
+  modal.appendChild(statusSelect);
+  modal.appendChild(colorInput);
+  modal.appendChild(editor);
+  modal.appendChild(actions);
+  document.body.appendChild(overlay);
+  document.body.appendChild(modal);
+  editor.focus();
 }
 
 function exportAllData() {
@@ -940,7 +1042,7 @@ function setupSettingsUI() {
   const settingsPanel = document.getElementById('board-settings-panel');
 
   btnAddNote.onclick = () => {
-    createNoteData('dashboard');
+    openCreateNoteDialog();
   };
 
   btnToggleSettings.onclick = () => {
