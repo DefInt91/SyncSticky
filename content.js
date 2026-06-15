@@ -6,6 +6,7 @@ const FLOATING_BUTTON_POSITION_KEY = 'floatingButtonPosition';
 const EDGE_BAR_SETTINGS_KEY = 'edgeReminderBarSettings';
 const EDGE_BAR_ID = 'syncsticky-edge-reminder-bar';
 const APP_SETTINGS_KEY = 'appSettings';
+const NOTE_HTML_MAP_KEY = 'noteContentHtml';
 const CHARACTER_LAYER_ID = 'syncsticky-character-layer';
 const CHARACTER_LIST_PATH = 'Character/characters.json';
 const DEFAULT_CHARACTER_ASSETS = ['Character/cat_1.png'];
@@ -649,10 +650,20 @@ function setupEdgeBarDrag(bar, settings) {
 
 function loadPageNotes() {
   chrome.storage.sync.get(['notes'], (result) => {
-    const notes = result.notes || [];
-    const pageNotes = notes.filter((note) => note.url === currentUrl);
-    pageNotes.forEach((note) => renderNote(normalizeNote(note)));
+    chrome.storage.local.get([NOTE_HTML_MAP_KEY], (localResult) => {
+      const notes = mergeNotesWithHtmlMap(result.notes || [], localResult[NOTE_HTML_MAP_KEY]);
+      const pageNotes = notes.filter((note) => note.url === currentUrl);
+      pageNotes.forEach((note) => renderNote(normalizeNote(note)));
+    });
   });
+}
+
+function mergeNotesWithHtmlMap(notes, htmlMap) {
+  const safeMap = htmlMap || {};
+  return notes.map((note) => ({
+    ...note,
+    contentHtml: safeMap[note.id]?.contentHtml || note.contentHtml || ''
+  }));
 }
 
 function normalizeNote(note) {
@@ -700,23 +711,47 @@ function createNoteData(targetUrl) {
 
 function saveNoteToStorage(noteData) {
   lastLocalSaveAt = Date.now();
-  chrome.storage.sync.get(['notes'], (result) => {
-    const notes = result.notes || [];
-    const index = notes.findIndex((note) => note.id === noteData.id);
-    const normalizedNote = normalizeNote(noteData);
-    normalizedNote.updatedAt = getTimestamp();
-    if (index > -1) {
-      notes[index] = { ...normalizedNote };
+  const normalizedNote = normalizeNote(noteData);
+  normalizedNote.updatedAt = getTimestamp();
+  saveNoteHtmlToLocal(normalizedNote, () => {
+    chrome.storage.sync.get(['notes'], (result) => {
+      const notes = result.notes || [];
+      const index = notes.findIndex((note) => note.id === normalizedNote.id);
+      const syncNote = stripLocalOnlyNoteFields(normalizedNote);
+      if (index > -1) {
+        notes[index] = { ...syncNote };
+      } else {
+        notes.push({ ...syncNote });
+      }
+      chrome.storage.sync.set({ notes });
+    });
+  });
+}
+
+function stripLocalOnlyNoteFields(note) {
+  const { contentHtml, ...syncNote } = note;
+  return syncNote;
+}
+
+function saveNoteHtmlToLocal(note, afterSave) {
+  chrome.storage.local.get([NOTE_HTML_MAP_KEY], (result) => {
+    const htmlMap = result[NOTE_HTML_MAP_KEY] || {};
+    if (note.contentHtml) {
+      htmlMap[note.id] = {
+        contentHtml: note.contentHtml,
+        updatedAt: note.updatedAt
+      };
     } else {
-      notes.push({ ...normalizedNote });
+      delete htmlMap[note.id];
     }
-    chrome.storage.sync.set({ notes });
+    chrome.storage.local.set({ [NOTE_HTML_MAP_KEY]: htmlMap }, afterSave);
   });
 }
 
 function deleteNoteFromStorage(id) {
   lastLocalSaveAt = Date.now();
   clearReminder(id);
+  removeNoteHtmlFromLocal(id);
   chrome.storage.sync.get(['notes'], (result) => {
     const notes = (result.notes || []).filter((note) => note.id !== id);
     chrome.storage.sync.set({ notes });
@@ -760,6 +795,14 @@ function linkify(text) {
   const urlRegex = /(https?:\/\/[^\s<]+)/g;
   return escapedText.replace(urlRegex, (url) => {
     return `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`;
+  });
+}
+
+function removeNoteHtmlFromLocal(id) {
+  chrome.storage.local.get([NOTE_HTML_MAP_KEY], (result) => {
+    const htmlMap = result[NOTE_HTML_MAP_KEY] || {};
+    delete htmlMap[id];
+    chrome.storage.local.set({ [NOTE_HTML_MAP_KEY]: htmlMap });
   });
 }
 

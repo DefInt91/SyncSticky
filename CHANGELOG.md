@@ -1,5 +1,16 @@
 # Changelog
 
+## 5.3
+- Fixed formatted note creation failures caused by storing rich HTML directly in `chrome.storage.sync`.
+- Moved rich note HTML into local storage while keeping sync notes lightweight.
+- Kept import/export support for formatted note HTML.
+- Added visible save error handling so note creation no longer fails silently.
+
+## 5.2 Known Issue
+- Formatted pasted content was stored directly in the synced `notes` payload.
+- Large or complex rich HTML could exceed Chrome sync storage limits, causing `Add Note` creation to appear successful while the note was not actually saved.
+- The create dialog closed even when storage failed, making the failure hard to notice.
+
 ## 4.6
 - Refined dashboard and sticky styling with a production-grade operations board aesthetic.
 

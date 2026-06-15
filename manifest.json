@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "SyncSticky Ultimate",
-  "version": "5.2",
+  "version": "5.3",
   "description": "Synced sticky notes for web pages, with reminders and a dashboard.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAjV+jviFlDVDn3VqQX6eGTw+EzWe8Z8mYd1ndakReVCP/AfzzpWEzz62AjnJlm/Q1MVbMMQx0KGqWDWC5Q28isknJay4mH0fm9CLIH6uSbcliM7EupiXozzIK/Ft/ExbpELmHaodLO1ckcKwcj0mCdPh21D5NMnI+roqsEeY9q7bbnQDF1lIXagtpcNCrdATDb7VQBrWs+vP5QdiFRDlVEHG/ep677zyB+NW/S+rM2grH8uNuUi3Y+bkCm7Q+7BLtPkQD7Q42fe3ezcwXz2DX3FBn+hXwXS982/P7kNQEuN2NTLsUpEFJ9wNRslMLhQfXlbuwsVDRTzGhCa35AapyAQIDAQAB",
   "permissions": [

@@ -5,11 +5,13 @@ const DEFAULT_NOTE_STATUS = 'discussion';
 const DEFAULT_COLUMN_WIDTH = 24;
 const DEFAULT_COLUMN_HEIGHT = 520;
 const APP_SETTINGS_KEY = 'appSettings';
+const NOTE_HTML_MAP_KEY = 'noteContentHtml';
 const LOCAL_EXPORT_KEYS = [
   'customBgImage',
   'customBgImageUpdatedAt',
   'floatingButtonPosition',
-  'edgeReminderBarSettings'
+  'edgeReminderBarSettings',
+  NOTE_HTML_MAP_KEY
 ];
 const DEFAULT_STATUSES = [
   { id: 'discussion', label: 'Discussion', color: '#c98219', width: DEFAULT_COLUMN_WIDTH, height: DEFAULT_COLUMN_HEIGHT },
@@ -131,22 +133,57 @@ function createId(prefix) {
 
 function loadDashboardData() {
   chrome.storage.sync.get(['notes', 'boardSettings'], (result) => {
-    boardSettings = normalizeBoardSettings(result.boardSettings);
-    currentNotes = (result.notes || []).map(normalizeNote);
-    const migratedNotes = migrateNotesToSettings(currentNotes);
-    const needsSettingsSave = JSON.stringify(boardSettings) !== JSON.stringify(result.boardSettings || {});
-    const needsNotesSave = JSON.stringify(migratedNotes) !== JSON.stringify(result.notes || []);
-    currentNotes = migratedNotes;
-    renderDashboard();
+    chrome.storage.local.get([NOTE_HTML_MAP_KEY], (localResult) => {
+      boardSettings = normalizeBoardSettings(result.boardSettings);
+      currentNotes = mergeNotesWithHtmlMap((result.notes || []).map(normalizeNote), localResult[NOTE_HTML_MAP_KEY]);
+      const migratedNotes = migrateNotesToSettings(currentNotes);
+      const syncReadyNotes = migratedNotes.map(stripLocalOnlyNoteFields);
+      const needsSettingsSave = JSON.stringify(boardSettings) !== JSON.stringify(result.boardSettings || {});
+      const needsNotesSave = JSON.stringify(syncReadyNotes) !== JSON.stringify(result.notes || []);
+      currentNotes = migratedNotes;
+      renderDashboard();
 
-    if (needsSettingsSave || needsNotesSave) {
-      lastLocalSaveAt = Date.now();
-      chrome.storage.sync.set({
-        boardSettings,
-        notes: currentNotes
-      });
+      persistNoteHtmlMapFromNotes(migratedNotes, localResult[NOTE_HTML_MAP_KEY]);
+
+      if (needsSettingsSave || needsNotesSave) {
+        lastLocalSaveAt = Date.now();
+        chrome.storage.sync.set({
+          boardSettings,
+          notes: syncReadyNotes
+        });
+      }
+    });
+  });
+}
+
+function persistNoteHtmlMapFromNotes(notes, currentMap) {
+  const htmlMap = { ...(currentMap || {}) };
+  let changed = false;
+  notes.forEach((note) => {
+    if (!note.contentHtml) return;
+    const currentValue = htmlMap[note.id];
+    if (!currentValue || getTimeValue(note.updatedAt) >= getTimeValue(currentValue.updatedAt)) {
+      htmlMap[note.id] = {
+        contentHtml: note.contentHtml,
+        updatedAt: note.updatedAt || getTimestamp()
+      };
+      changed = true;
     }
   });
+  if (changed) chrome.storage.local.set({ [NOTE_HTML_MAP_KEY]: htmlMap });
+}
+
+function mergeNotesWithHtmlMap(notes, htmlMap) {
+  const safeMap = htmlMap || {};
+  return notes.map((note) => ({
+    ...note,
+    contentHtml: safeMap[note.id]?.contentHtml || note.contentHtml || ''
+  }));
+}
+
+function stripLocalOnlyNoteFields(note) {
+  const { contentHtml, ...syncNote } = note;
+  return syncNote;
 }
 
 function migrateNotesToSettings(notes) {
@@ -435,7 +472,7 @@ function removeStatus(statusId) {
   saveAllData(renderDashboard);
 }
 
-function createNoteData(targetUrl, noteInput = {}) {
+function createNoteData(targetUrl, noteInput = {}, afterCreate) {
   const tabId = noteInput.tabId || boardSettings.activeTabId;
   const statuses = getStatusesForTab(tabId);
   if (!statuses.length) {
@@ -462,7 +499,14 @@ function createNoteData(targetUrl, noteInput = {}) {
     minimizedY: 12,
     updatedAt: getTimestamp()
   };
-  saveNoteToStorage(newNote, loadDashboardData);
+  saveNoteToStorage(newNote, (saved) => {
+    if (!saved) {
+      if (typeof afterCreate === 'function') afterCreate(false);
+      return;
+    }
+    loadDashboardData();
+    if (typeof afterCreate === 'function') afterCreate(true);
+  });
 }
 
 function saveBoardSettings(afterSave) {
@@ -483,18 +527,49 @@ function saveAllData(afterSave) {
 
 function saveNoteToStorage(noteData, afterSave) {
   lastLocalSaveAt = Date.now();
-  chrome.storage.sync.get(['notes'], (result) => {
-    const notes = (result.notes || []).map(normalizeNote);
-    const normalizedNote = normalizeNote(noteData);
-    normalizedNote.updatedAt = getTimestamp();
-    const index = notes.findIndex((note) => note.id === normalizedNote.id);
-    if (index > -1) {
-      notes[index] = { ...normalizedNote };
-    } else {
-      notes.push({ ...normalizedNote });
+  const normalizedNote = normalizeNote(noteData);
+  normalizedNote.updatedAt = getTimestamp();
+  saveNoteHtmlToLocal(normalizedNote, (htmlSaved) => {
+    if (!htmlSaved) {
+      alert('Could not save formatted note content.');
+      if (typeof afterSave === 'function') afterSave(false);
+      return;
     }
-    chrome.storage.sync.set({ notes }, () => {
-      if (typeof afterSave === 'function') afterSave();
+
+    chrome.storage.sync.get(['notes'], (result) => {
+      const notes = (result.notes || []).map(normalizeNote);
+      const syncNote = stripLocalOnlyNoteFields(normalizedNote);
+      const index = notes.findIndex((note) => note.id === syncNote.id);
+      if (index > -1) {
+        notes[index] = { ...syncNote };
+      } else {
+        notes.push({ ...syncNote });
+      }
+      chrome.storage.sync.set({ notes }, () => {
+        if (chrome.runtime.lastError) {
+          alert(`Could not save note: ${chrome.runtime.lastError.message}`);
+          if (typeof afterSave === 'function') afterSave(false);
+          return;
+        }
+        if (typeof afterSave === 'function') afterSave(true);
+      });
+    });
+  });
+}
+
+function saveNoteHtmlToLocal(note, afterSave) {
+  chrome.storage.local.get([NOTE_HTML_MAP_KEY], (result) => {
+    const htmlMap = result[NOTE_HTML_MAP_KEY] || {};
+    if (note.contentHtml) {
+      htmlMap[note.id] = {
+        contentHtml: note.contentHtml,
+        updatedAt: note.updatedAt
+      };
+    } else {
+      delete htmlMap[note.id];
+    }
+    chrome.storage.local.set({ [NOTE_HTML_MAP_KEY]: htmlMap }, () => {
+      afterSave(!chrome.runtime.lastError);
     });
   });
 }
@@ -502,11 +577,20 @@ function saveNoteToStorage(noteData, afterSave) {
 function deleteNoteFromStorage(id, afterDelete) {
   lastLocalSaveAt = Date.now();
   clearReminder(id);
+  removeNoteHtmlFromLocal(id);
   chrome.storage.sync.get(['notes'], (result) => {
     const notes = (result.notes || []).filter((note) => note.id !== id);
     chrome.storage.sync.set({ notes }, () => {
       if (typeof afterDelete === 'function') afterDelete();
     });
+  });
+}
+
+function removeNoteHtmlFromLocal(id) {
+  chrome.storage.local.get([NOTE_HTML_MAP_KEY], (result) => {
+    const htmlMap = result[NOTE_HTML_MAP_KEY] || {};
+    delete htmlMap[id];
+    chrome.storage.local.set({ [NOTE_HTML_MAP_KEY]: htmlMap });
   });
 }
 
@@ -877,8 +961,9 @@ function openCreateNoteDialog() {
       color: colorInput.value,
       content: editor.innerText,
       contentHtml: editor.innerHTML
+    }, (created) => {
+      if (created) closeDialog();
     });
-    closeDialog();
   };
 
   actions.appendChild(cancelBtn);
@@ -911,7 +996,8 @@ function exportAllData() {
           customBgImage: localData.customBgImage || null,
           customBgImageUpdatedAt: localData.customBgImageUpdatedAt || '',
           floatingButtonPosition: localData.floatingButtonPosition || null,
-          edgeReminderBarSettings: localData.edgeReminderBarSettings || null
+          edgeReminderBarSettings: localData.edgeReminderBarSettings || null,
+          noteContentHtml: localData[NOTE_HTML_MAP_KEY] || {}
         }
       };
       downloadJson(payload);
@@ -1012,12 +1098,26 @@ function mergeImportedLocalData(importedLocal, afterMerge) {
       if (nextValue) localUpdate[key] = nextValue;
     });
 
+    const mergedHtmlMap = mergeNoteHtmlMaps(currentLocal[NOTE_HTML_MAP_KEY] || {}, importedLocal.noteContentHtml || {});
+    if (Object.keys(mergedHtmlMap).length) localUpdate[NOTE_HTML_MAP_KEY] = mergedHtmlMap;
+
     if (Object.keys(localUpdate).length) {
       chrome.storage.local.set(localUpdate, afterMerge);
       return;
     }
     afterMerge();
   });
+}
+
+function mergeNoteHtmlMaps(currentMap, importedMap) {
+  const merged = { ...currentMap };
+  Object.entries(importedMap).forEach(([noteId, importedValue]) => {
+    const currentValue = merged[noteId];
+    if (!currentValue || getTimeValue(importedValue?.updatedAt) > getTimeValue(currentValue.updatedAt)) {
+      merged[noteId] = importedValue;
+    }
+  });
+  return merged;
 }
 
 function setupSettingsUI() {
