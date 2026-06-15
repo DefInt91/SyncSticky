@@ -564,7 +564,7 @@
 
     .settings-url-row {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-columns: minmax(0, 1fr) auto auto;
       gap: 6px;
       align-items: center;
     }
@@ -582,14 +582,22 @@
       font-weight: bold;
       font-size: 13px;
     }
-    #btn-save-bg {
+    .backup-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin-top: 8px;
+    }
+
+    #btn-save-bg,
+    #btn-clear-bg {
       background-color: #0f766e;
       color: white;
       padding: 4px 7px;
       font-size: 11px;
       min-height: 24px;
     }
-    #btn-clear-bg { background-color: #a33a2f; color: white; }
+    #btn-clear-bg { background-color: #a33a2f; }
     #btn-close-bg { background-color: #666; color: white; }
 
     #modal-overlay {
@@ -727,6 +735,7 @@
     <div class="settings-url-row">
       <input type="text" id="bg-url-input" placeholder="Enter image URL...">
       <button id="btn-save-bg" type="button">Save URL</button>
+      <button id="btn-clear-bg" type="button">Clear</button>
     </div>
 
     <hr style="border: 0; border-top: 1px dashed #ddd; margin: 15px 0;">
@@ -749,11 +758,12 @@
 
     <h4>Backup</h4>
     <input type="file" id="import-file-input" accept="application/json" hidden>
+    <div class="backup-actions">
+      <button id="btn-export-data" type="button">Export</button>
+      <button id="btn-import-data" type="button">Import</button>
+    </div>
 
     <div class="btn-group">
-      <button id="btn-clear-bg">Clear</button>
-      <button id="btn-export-data">Export</button>
-      <button id="btn-import-data">Import</button>
       <button id="btn-close-bg">Close</button>
     </div>
   </div>
