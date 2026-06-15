@@ -6,14 +6,18 @@ const FLOATING_BUTTON_POSITION_KEY = 'floatingButtonPosition';
 const EDGE_BAR_SETTINGS_KEY = 'edgeReminderBarSettings';
 const EDGE_BAR_ID = 'syncsticky-edge-reminder-bar';
 const APP_SETTINGS_KEY = 'appSettings';
+const CHARACTER_LAYER_ID = 'syncsticky-character-layer';
+const CHARACTER_ASSETS = ['Character/cat_1.png'];
 const DEFAULT_TAB_ID = 'default';
 const DEFAULT_NOTE_STATUS = 'discussion';
 let lastLocalSaveAt = 0;
+let characterAnimationId = 0;
 
 window.addEventListener('load', () => {
   refreshFloatingButton();
   loadPageNotes();
   loadEdgeReminderBar();
+  refreshCharacters();
 });
 
 chrome.storage.onChanged.addListener((changes, area) => {
@@ -23,6 +27,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
       loadPageNotes();
     }
     loadEdgeReminderBar();
+    refreshCharacters();
   }
 
   if (area === 'sync' && changes.boardSettings) {
@@ -31,6 +36,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
   if (area === 'sync' && changes.appSettings) {
     refreshFloatingButton();
+    refreshCharacters();
   }
 });
 
@@ -62,8 +68,16 @@ function refreshFloatingButton() {
 function normalizeAppSettings(settings) {
   return {
     addButtonEnabled: settings?.addButtonEnabled !== false,
+    charactersEnabled: settings?.charactersEnabled !== false,
+    characterCount: normalizeCharacterCount(settings?.characterCount),
     updatedAt: settings?.updatedAt || ''
   };
+}
+
+function normalizeCharacterCount(value) {
+  const count = Number(value);
+  if (!Number.isFinite(count)) return 1;
+  return Math.min(Math.max(Math.round(count), 1), 5);
 }
 
 function createFloatingButton() {
@@ -383,6 +397,173 @@ function renderEdgeReminderBar(groups, settings) {
     settings.edge = snappedPosition.edge;
     setupEdgeBarDrag(bar, settings);
   }
+}
+
+function refreshCharacters() {
+  chrome.storage.sync.get([APP_SETTINGS_KEY], (result) => {
+    const settings = normalizeAppSettings(result[APP_SETTINGS_KEY]);
+    const hasNotes = document.querySelectorAll('.sticky-note-card').length > 0;
+    if (!settings.charactersEnabled || !hasNotes) {
+      removeCharacters();
+      return;
+    }
+    renderCharacters(settings.characterCount);
+  });
+}
+
+function removeCharacters() {
+  if (characterAnimationId) {
+    cancelAnimationFrame(characterAnimationId);
+    characterAnimationId = 0;
+  }
+  const layer = document.getElementById(CHARACTER_LAYER_ID);
+  if (layer) layer.remove();
+}
+
+function renderCharacters(count) {
+  let layer = document.getElementById(CHARACTER_LAYER_ID);
+  if (!layer) {
+    layer = document.createElement('div');
+    layer.id = CHARACTER_LAYER_ID;
+    layer.style.cssText = `
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 2147483645;
+      overflow: hidden;
+    `;
+    document.body.appendChild(layer);
+  }
+
+  const currentCount = layer.querySelectorAll('.syncsticky-character').length;
+  for (let index = currentCount; index < count; index++) {
+    layer.appendChild(createCharacterElement(index));
+  }
+  Array.from(layer.querySelectorAll('.syncsticky-character'))
+    .slice(count)
+    .forEach((item) => item.remove());
+
+  if (!characterAnimationId) {
+    characterAnimationId = requestAnimationFrame(animateCharacters);
+  }
+}
+
+function createCharacterElement(index) {
+  const img = document.createElement('img');
+  img.className = 'syncsticky-character';
+  img.src = chrome.runtime.getURL(CHARACTER_ASSETS[index % CHARACTER_ASSETS.length]);
+  img.alt = '';
+  img.style.cssText = `
+    position: fixed;
+    width: 54px;
+    height: 54px;
+    object-fit: contain;
+    transform-origin: center bottom;
+    pointer-events: none;
+    user-select: none;
+  `;
+  img.characterState = {
+    x: 40 + index * 72,
+    y: Math.max(window.innerHeight - 90, 0),
+    vx: index % 2 === 0 ? 0.7 : -0.7,
+    vy: 0,
+    action: 'walk',
+    nextActionAt: performance.now() + 1600 + index * 500
+  };
+  return img;
+}
+
+function animateCharacters(now) {
+  const layer = document.getElementById(CHARACTER_LAYER_ID);
+  if (!layer) {
+    characterAnimationId = 0;
+    return;
+  }
+
+  const noteRects = getStickyNoteRects();
+  layer.querySelectorAll('.syncsticky-character').forEach((character) => {
+    updateCharacter(character, noteRects, now);
+  });
+  characterAnimationId = requestAnimationFrame(animateCharacters);
+}
+
+function getStickyNoteRects() {
+  return Array.from(document.querySelectorAll('.sticky-note-card'))
+    .filter((card) => !card.closest(`#${CHARACTER_LAYER_ID}`))
+    .map((card) => card.getBoundingClientRect());
+}
+
+function updateCharacter(character, noteRects, now) {
+  const state = character.characterState;
+  const width = character.offsetWidth || 54;
+  const height = character.offsetHeight || 54;
+
+  if (now > state.nextActionAt) {
+    const actions = ['walk', 'idle', 'climb'];
+    state.action = actions[Math.floor(Math.random() * actions.length)];
+    state.nextActionAt = now + 1200 + Math.random() * 2600;
+    if (state.action === 'idle') state.vx = 0;
+    if (state.action === 'walk') state.vx = Math.random() > 0.5 ? 0.7 : -0.7;
+  }
+
+  if (state.action === 'climb' && noteRects.length) {
+    const wall = noteRects[Math.floor(Math.random() * noteRects.length)];
+    const wallSide = Math.abs(state.x - wall.left) < Math.abs(state.x - wall.right) ? wall.left : wall.right;
+    state.x += (wallSide - state.x) * 0.05;
+    state.y -= 0.8;
+    if (state.y < wall.top) {
+      state.action = 'walk';
+      state.y = wall.top - height;
+      state.vx = Math.random() > 0.5 ? 0.7 : -0.7;
+    }
+  } else {
+    state.vy += 0.24;
+    state.x += state.vx;
+    state.y += state.vy;
+  }
+
+  const floorY = window.innerHeight - height;
+  if (state.y > floorY) {
+    state.y = floorY;
+    state.vy = 0;
+  }
+
+  noteRects.forEach((rect) => {
+    const overlapsX = state.x + width > rect.left && state.x < rect.right;
+    const isFallingOntoTop = state.vy >= 0 && state.y + height >= rect.top && state.y + height <= rect.top + 12;
+    if (overlapsX && isFallingOntoTop) {
+      state.y = rect.top - height;
+      state.vy = 0;
+      return;
+    }
+
+    const overlapsY = state.y + height > rect.top && state.y < rect.bottom;
+    if (overlapsY && state.x + width >= rect.left && state.x <= rect.left && state.vx > 0) {
+      state.x = rect.left - width;
+      state.vx *= -1;
+    }
+    if (overlapsY && state.x <= rect.right && state.x + width >= rect.right && state.vx < 0) {
+      state.x = rect.right;
+      state.vx *= -1;
+    }
+  });
+
+  if (state.x < 0) {
+    state.x = 0;
+    state.vx = Math.abs(state.vx || 0.7);
+  }
+  if (state.x > window.innerWidth - width) {
+    state.x = window.innerWidth - width;
+    state.vx = -Math.abs(state.vx || 0.7);
+  }
+  if (state.y < 0) {
+    state.y = 0;
+    state.vy = 0.4;
+  }
+
+  const direction = state.vx < 0 ? -1 : 1;
+  const bob = state.action === 'idle' ? Math.sin(now / 300) * 1.4 : Math.sin(now / 120) * 2;
+  character.style.transform = `translate(${state.x}px, ${state.y + bob}px) scaleX(${direction})`;
 }
 
 function setupEdgeBarDrag(bar, settings) {

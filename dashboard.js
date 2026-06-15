@@ -68,8 +68,16 @@ function getDefaultBoardSettings() {
 function normalizeAppSettings(settings) {
   return {
     addButtonEnabled: settings?.addButtonEnabled !== false,
+    charactersEnabled: settings?.charactersEnabled !== false,
+    characterCount: normalizeCharacterCount(settings?.characterCount),
     updatedAt: settings?.updatedAt || ''
   };
+}
+
+function normalizeCharacterCount(value) {
+  const count = Number(value);
+  if (!Number.isFinite(count)) return 1;
+  return Math.min(Math.max(Math.round(count), 1), 5);
 }
 
 function normalizeBoardSettings(settings) {
@@ -927,6 +935,8 @@ function setupSettingsUI() {
   const inputFile = document.getElementById('bg-file-input');
   const inputImport = document.getElementById('import-file-input');
   const inputAddButtonEnabled = document.getElementById('add-button-enabled-input');
+  const inputCharacterEnabled = document.getElementById('character-enabled-input');
+  const inputCharacterCount = document.getElementById('character-count-input');
   const settingsPanel = document.getElementById('board-settings-panel');
 
   btnAddNote.onclick = () => {
@@ -944,8 +954,11 @@ function setupSettingsUI() {
     modal.style.display = 'block';
     overlay.style.display = 'block';
     chrome.storage.sync.get(['globalSettings', APP_SETTINGS_KEY], (res) => {
+      const appSettings = normalizeAppSettings(res[APP_SETTINGS_KEY]);
       inputUrl.value = res.globalSettings?.bgUrl || '';
-      inputAddButtonEnabled.checked = normalizeAppSettings(res[APP_SETTINGS_KEY]).addButtonEnabled;
+      inputAddButtonEnabled.checked = appSettings.addButtonEnabled;
+      inputCharacterEnabled.checked = appSettings.charactersEnabled;
+      inputCharacterCount.value = String(appSettings.characterCount);
     });
     inputFile.value = '';
     inputImport.value = '';
@@ -1005,15 +1018,36 @@ function setupSettingsUI() {
     chrome.storage.sync.set({
       [APP_SETTINGS_KEY]: {
         addButtonEnabled: inputAddButtonEnabled.checked,
+        charactersEnabled: inputCharacterEnabled.checked,
+        characterCount: normalizeCharacterCount(inputCharacterCount.value),
         updatedAt: getTimestamp()
       }
     });
   };
 
+  const saveCharacterSettings = () => {
+    chrome.storage.sync.set({
+      [APP_SETTINGS_KEY]: {
+        addButtonEnabled: inputAddButtonEnabled.checked,
+        charactersEnabled: inputCharacterEnabled.checked,
+        characterCount: normalizeCharacterCount(inputCharacterCount.value),
+        updatedAt: getTimestamp()
+      }
+    });
+  };
+
+  inputCharacterEnabled.onchange = saveCharacterSettings;
+  inputCharacterCount.onchange = saveCharacterSettings;
+
   btnExport.onclick = exportAllData;
 
   btnImport.onclick = () => {
+    inputImport.click();
+  };
+
+  inputImport.onchange = () => {
     importAllData(inputImport.files[0]);
+    inputImport.value = '';
   };
 }
 
