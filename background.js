@@ -1,3 +1,5 @@
+importScripts('note-store.js');
+
 const ALARM_PREFIX = 'note:';
 
 function getAlarmName(noteId) {
@@ -38,7 +40,7 @@ function injectContentIntoExistingTabs() {
           if (chrome.runtime.lastError) return;
           chrome.scripting.executeScript({
             target: { tabId: tab.id },
-            files: ['content.js']
+            files: ['note-store.js', 'note-utils.js', 'content.js']
           });
         });
       });
@@ -46,8 +48,7 @@ function injectContentIntoExistingTabs() {
 }
 
 function syncReminderAlarms() {
-  chrome.storage.sync.get(['notes'], (result) => {
-    const notes = result.notes || [];
+  SyncStickyNoteStore.loadNotes().then((notes) => {
     const activeReminderMap = new Map();
 
     notes.forEach((note) => {
@@ -75,14 +76,14 @@ function syncReminderAlarms() {
         });
       });
     });
-  });
+  }).catch(() => {});
 }
 
 chrome.action.onClicked.addListener(() => {
   chrome.tabs.create({ url: 'dashboard.html' });
 });
 
-chrome.runtime.onMessage.addListener((message) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || !message.noteId) return;
 
   if (message.type === 'scheduleReminder') {
@@ -92,6 +93,8 @@ chrome.runtime.onMessage.addListener((message) => {
   if (message.type === 'clearReminder') {
     clearReminder(message.noteId);
   }
+
+  sendResponse();
 });
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -101,7 +104,7 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.runtime.onStartup.addListener(syncReminderAlarms);
 
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'sync' && changes.notes) {
+  if (SyncStickyNoteStore.hasNoteStorageChange(changes, area)) {
     syncReminderAlarms();
   }
 });
@@ -110,8 +113,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   const noteId = getNoteIdFromAlarm(alarm.name);
   if (!noteId) return;
 
-  chrome.storage.sync.get(['notes'], (result) => {
-    const notes = result.notes || [];
+  SyncStickyNoteStore.loadNotes().then((notes) => {
     const note = notes.find((item) => item.id === noteId);
     const content = note?.content?.trim();
     const message = content ? content.slice(0, 120) : 'A sticky note reminder is due.';
@@ -123,5 +125,5 @@ chrome.alarms.onAlarm.addListener((alarm) => {
       message,
       priority: 2
     });
-  });
+  }).catch(() => {});
 });

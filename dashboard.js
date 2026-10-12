@@ -1,17 +1,17 @@
 const SAVE_DEBOUNCE_MS = 300;
 const LOCAL_SAVE_IGNORE_MS = 500;
-const DEFAULT_TAB_ID = 'default';
-const DEFAULT_NOTE_STATUS = 'discussion';
 const DEFAULT_COLUMN_WIDTH = 24;
-const DEFAULT_COLUMN_HEIGHT = 520;
+const DEFAULT_COLUMN_HEIGHT = 60;
 const APP_SETTINGS_KEY = 'appSettings';
-const NOTE_HTML_MAP_KEY = 'noteContentHtml';
+const noteStore = SyncStickyNoteStore;
+const noteUtils = SyncStickyNoteUtils;
+const DEFAULT_TAB_ID = noteUtils.DEFAULT_TAB_ID;
+const DEFAULT_NOTE_STATUS = noteUtils.DEFAULT_NOTE_STATUS;
 const LOCAL_EXPORT_KEYS = [
   'customBgImage',
   'customBgImageUpdatedAt',
   'floatingButtonPosition',
-  'edgeReminderBarSettings',
-  NOTE_HTML_MAP_KEY
+  'edgeReminderBarSettings'
 ];
 const DEFAULT_STATUSES = [
   { id: 'discussion', label: 'Discussion', color: '#c98219', width: DEFAULT_COLUMN_WIDTH, height: DEFAULT_COLUMN_HEIGHT },
@@ -27,10 +27,6 @@ let lastLocalSaveAt = 0;
 let boardSettings = getDefaultBoardSettings();
 let currentNotes = [];
 
-function getTimestamp() {
-  return new Date().toISOString();
-}
-
 function getTimeValue(value) {
   const time = Date.parse(value || '');
   return Number.isFinite(time) ? time : 0;
@@ -45,7 +41,7 @@ window.addEventListener('load', () => {
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'sync') return;
 
-  if (changes.notes || changes.boardSettings) {
+  if (noteStore.hasNoteStorageChange(changes, area) || changes.boardSettings) {
     if (Date.now() - lastLocalSaveAt < LOCAL_SAVE_IGNORE_MS) return;
     loadDashboardData();
   }
@@ -65,21 +61,6 @@ function getDefaultBoardSettings() {
     activeTabId: DEFAULT_TAB_ID,
     updatedAt: ''
   };
-}
-
-function normalizeAppSettings(settings) {
-  return {
-    addButtonEnabled: settings?.addButtonEnabled !== false,
-    charactersEnabled: settings?.charactersEnabled !== false,
-    characterCount: normalizeCharacterCount(settings?.characterCount),
-    updatedAt: settings?.updatedAt || ''
-  };
-}
-
-function normalizeCharacterCount(value) {
-  const count = Number(value);
-  if (!Number.isFinite(count)) return 1;
-  return Math.min(Math.max(Math.round(count), 1), 5);
 }
 
 function normalizeBoardSettings(settings) {
@@ -112,9 +93,9 @@ function normalizeStatuses(statuses) {
   return sourceStatuses.map((status, index) => ({
     id: String(status.id || createId('status')),
     label: typeof status.label === 'string' ? status.label : `Status ${index + 1}`,
-    color: isHexColor(status.color) ? status.color : DEFAULT_STATUSES[index % DEFAULT_STATUSES.length].color,
+    color: noteUtils.isHexColor(status.color) ? status.color : DEFAULT_STATUSES[index % DEFAULT_STATUSES.length].color,
     width: normalizeColumnWidth(status.width),
-    height: Number.isFinite(status.height) && status.height > 0 ? status.height : DEFAULT_COLUMN_HEIGHT
+    height: normalizeColumnHeight(status.height)
   }));
 }
 
@@ -123,8 +104,12 @@ function normalizeColumnWidth(width) {
   return width <= 2 ? DEFAULT_COLUMN_WIDTH : width;
 }
 
-function isHexColor(value) {
-  return /^#[0-9a-f]{6}$/i.test(String(value || ''));
+// Column height is stored as a vh percentage (20-90). Older saved data
+// stored an absolute px value (e.g. 520); clamping to 90 here means it
+// will be re-saved as a valid vh value the next time settings change.
+function normalizeColumnHeight(height) {
+  if (!Number.isFinite(height) || height <= 0) return DEFAULT_COLUMN_HEIGHT;
+  return Math.min(Math.max(height, 20), 90);
 }
 
 function createId(prefix) {
@@ -132,58 +117,24 @@ function createId(prefix) {
 }
 
 function loadDashboardData() {
-  chrome.storage.sync.get(['notes', 'boardSettings'], (result) => {
-    chrome.storage.local.get([NOTE_HTML_MAP_KEY], (localResult) => {
-      boardSettings = normalizeBoardSettings(result.boardSettings);
-      currentNotes = mergeNotesWithHtmlMap((result.notes || []).map(normalizeNote), localResult[NOTE_HTML_MAP_KEY]);
-      const migratedNotes = migrateNotesToSettings(currentNotes);
-      const syncReadyNotes = migratedNotes.map(stripLocalOnlyNoteFields);
-      const needsSettingsSave = JSON.stringify(boardSettings) !== JSON.stringify(result.boardSettings || {});
-      const needsNotesSave = JSON.stringify(syncReadyNotes) !== JSON.stringify(result.notes || []);
-      currentNotes = migratedNotes;
-      renderDashboard();
+  Promise.all([
+    noteStore.loadNotes(),
+    new Promise((resolve) => chrome.storage.sync.get(['boardSettings'], resolve))
+  ]).then(([notes, result]) => {
+    boardSettings = normalizeBoardSettings(result.boardSettings);
+    currentNotes = notes.map(noteUtils.normalizeNote);
+    const migratedNotes = migrateNotesToSettings(currentNotes);
+    const needsSettingsSave = JSON.stringify(boardSettings) !== JSON.stringify(result.boardSettings || {});
+    const needsNotesSave = JSON.stringify(migratedNotes) !== JSON.stringify(currentNotes);
+    currentNotes = migratedNotes;
+    renderDashboard();
 
-      persistNoteHtmlMapFromNotes(migratedNotes, localResult[NOTE_HTML_MAP_KEY]);
-
-      if (needsSettingsSave || needsNotesSave) {
-        lastLocalSaveAt = Date.now();
-        chrome.storage.sync.set({
-          boardSettings,
-          notes: syncReadyNotes
-        });
-      }
-    });
-  });
-}
-
-function persistNoteHtmlMapFromNotes(notes, currentMap) {
-  const htmlMap = { ...(currentMap || {}) };
-  let changed = false;
-  notes.forEach((note) => {
-    if (!note.contentHtml) return;
-    const currentValue = htmlMap[note.id];
-    if (!currentValue || getTimeValue(note.updatedAt) >= getTimeValue(currentValue.updatedAt)) {
-      htmlMap[note.id] = {
-        contentHtml: note.contentHtml,
-        updatedAt: note.updatedAt || getTimestamp()
-      };
-      changed = true;
+    if (needsSettingsSave || needsNotesSave) {
+      lastLocalSaveAt = Date.now();
+      if (needsSettingsSave) chrome.storage.sync.set({ boardSettings });
+      if (needsNotesSave) noteStore.replaceAllNotes(migratedNotes).catch(() => {});
     }
-  });
-  if (changed) chrome.storage.local.set({ [NOTE_HTML_MAP_KEY]: htmlMap });
-}
-
-function mergeNotesWithHtmlMap(notes, htmlMap) {
-  const safeMap = htmlMap || {};
-  return notes.map((note) => ({
-    ...note,
-    contentHtml: safeMap[note.id]?.contentHtml || note.contentHtml || ''
-  }));
-}
-
-function stripLocalOnlyNoteFields(note) {
-  const { contentHtml, ...syncNote } = note;
-  return syncNote;
+  }).catch(() => {});
 }
 
 function migrateNotesToSettings(notes) {
@@ -200,15 +151,6 @@ function migrateNotesToSettings(notes) {
       tabId: nextTabId
     };
   });
-}
-
-function normalizeNote(note) {
-  return {
-    ...note,
-    status: note.status || DEFAULT_NOTE_STATUS,
-    tabId: note.tabId || DEFAULT_TAB_ID,
-    edgeReminder: Boolean(note.edgeReminder)
-  };
 }
 
 function renderDashboard() {
@@ -337,7 +279,7 @@ function renderTodoBoard() {
     column.dataset.status = status.id;
     column.style.borderTopColor = status.color;
     column.style.flexBasis = `calc(${status.width}% - 12px)`;
-    column.style.height = `${status.height}px`;
+    column.style.height = `${status.height}vh`;
 
     const header = document.createElement('div');
     header.className = 'todo-column-header';
@@ -387,11 +329,11 @@ function renderColumnResizeHandle(column, status) {
 
     const onMove = (moveEvent) => {
       const widthDelta = ((moveEvent.clientX - startX) / boardWidth) * 100;
-      const heightDelta = moveEvent.clientY - startY;
+      const heightDelta = ((moveEvent.clientY - startY) / window.innerHeight) * 100;
       status.width = Math.min(Math.max(startWidth + widthDelta, 16), 100);
-      status.height = Math.min(Math.max(startHeight + heightDelta, 220), 1200);
+      status.height = Math.min(Math.max(startHeight + heightDelta, 20), 90);
       column.style.flexBasis = `calc(${status.width}% - 12px)`;
-      column.style.height = `${status.height}px`;
+      column.style.height = `${status.height}vh`;
     };
 
     const onUp = () => {
@@ -482,7 +424,6 @@ function createNoteData(targetUrl, noteInput = {}, afterCreate) {
   const newNote = {
     id: Date.now().toString(),
     content: noteInput.content || '',
-    contentHtml: noteInput.contentHtml || '',
     x: 100 + Math.random() * 50,
     y: 100 + Math.random() * 50,
     width: 250,
@@ -497,7 +438,7 @@ function createNoteData(targetUrl, noteInput = {}, afterCreate) {
     minimized: false,
     minimizedX: 12,
     minimizedY: 12,
-    updatedAt: getTimestamp()
+    updatedAt: noteUtils.getTimestamp()
   };
   saveNoteToStorage(newNote, (saved) => {
     if (!saved) {
@@ -511,7 +452,7 @@ function createNoteData(targetUrl, noteInput = {}, afterCreate) {
 
 function saveBoardSettings(afterSave) {
   lastLocalSaveAt = Date.now();
-  boardSettings.updatedAt = getTimestamp();
+  boardSettings.updatedAt = noteUtils.getTimestamp();
   chrome.storage.sync.set({ boardSettings }, () => {
     if (typeof afterSave === 'function') afterSave();
   });
@@ -519,164 +460,60 @@ function saveBoardSettings(afterSave) {
 
 function saveAllData(afterSave) {
   lastLocalSaveAt = Date.now();
-  boardSettings.updatedAt = getTimestamp();
-  chrome.storage.sync.set({ boardSettings, notes: currentNotes }, () => {
-    if (typeof afterSave === 'function') afterSave();
+  boardSettings.updatedAt = noteUtils.getTimestamp();
+  chrome.storage.sync.set({ boardSettings }, () => {
+    noteStore.replaceAllNotes(currentNotes)
+      .then(() => {
+        if (typeof afterSave === 'function') afterSave();
+      })
+      .catch((error) => {
+        alert(`Could not save notes: ${error.message}`);
+      });
   });
 }
 
 function saveNoteToStorage(noteData, afterSave) {
   lastLocalSaveAt = Date.now();
-  const normalizedNote = normalizeNote(noteData);
-  normalizedNote.updatedAt = getTimestamp();
-  saveNoteHtmlToLocal(normalizedNote, (htmlSaved) => {
-    if (!htmlSaved) {
-      alert('Could not save formatted note content.');
+  const normalizedNote = noteUtils.normalizeNote(noteData);
+  normalizedNote.updatedAt = noteUtils.getTimestamp();
+  noteStore.saveNote(normalizedNote)
+    .then(() => {
+      if (typeof afterSave === 'function') afterSave(true);
+    })
+    .catch((error) => {
+      alert(`Could not save note: ${error.message}`);
       if (typeof afterSave === 'function') afterSave(false);
-      return;
-    }
-
-    chrome.storage.sync.get(['notes'], (result) => {
-      const notes = (result.notes || []).map(normalizeNote);
-      const syncNote = stripLocalOnlyNoteFields(normalizedNote);
-      const index = notes.findIndex((note) => note.id === syncNote.id);
-      if (index > -1) {
-        notes[index] = { ...syncNote };
-      } else {
-        notes.push({ ...syncNote });
-      }
-      chrome.storage.sync.set({ notes }, () => {
-        if (chrome.runtime.lastError) {
-          alert(`Could not save note: ${chrome.runtime.lastError.message}`);
-          if (typeof afterSave === 'function') afterSave(false);
-          return;
-        }
-        if (typeof afterSave === 'function') afterSave(true);
-      });
     });
-  });
-}
-
-function saveNoteHtmlToLocal(note, afterSave) {
-  chrome.storage.local.get([NOTE_HTML_MAP_KEY], (result) => {
-    const htmlMap = result[NOTE_HTML_MAP_KEY] || {};
-    if (note.contentHtml) {
-      htmlMap[note.id] = {
-        contentHtml: note.contentHtml,
-        updatedAt: note.updatedAt
-      };
-    } else {
-      delete htmlMap[note.id];
-    }
-    chrome.storage.local.set({ [NOTE_HTML_MAP_KEY]: htmlMap }, () => {
-      afterSave(!chrome.runtime.lastError);
-    });
-  });
 }
 
 function deleteNoteFromStorage(id, afterDelete) {
   lastLocalSaveAt = Date.now();
-  clearReminder(id);
-  removeNoteHtmlFromLocal(id);
-  chrome.storage.sync.get(['notes'], (result) => {
-    const notes = (result.notes || []).filter((note) => note.id !== id);
-    chrome.storage.sync.set({ notes }, () => {
+  noteUtils.clearReminder(id);
+  noteStore.removeNote(id)
+    .then(() => {
       if (typeof afterDelete === 'function') afterDelete();
+    })
+    .catch((error) => {
+      alert(`Could not delete note: ${error.message}`);
     });
-  });
-}
-
-function removeNoteHtmlFromLocal(id) {
-  chrome.storage.local.get([NOTE_HTML_MAP_KEY], (result) => {
-    const htmlMap = result[NOTE_HTML_MAP_KEY] || {};
-    delete htmlMap[id];
-    chrome.storage.local.set({ [NOTE_HTML_MAP_KEY]: htmlMap });
-  });
 }
 
 function updateNote(id, updater, afterUpdate) {
   lastLocalSaveAt = Date.now();
-  chrome.storage.sync.get(['notes'], (result) => {
-    const notes = (result.notes || []).map(normalizeNote);
-    const index = notes.findIndex((note) => note.id === id);
+  noteStore.loadNotes().then((notes) => {
+    const normalizedNotes = notes.map(noteUtils.normalizeNote);
+    const index = normalizedNotes.findIndex((note) => note.id === id);
     if (index === -1) return;
-    notes[index] = normalizeNote(updater(notes[index]));
-    chrome.storage.sync.set({ notes }, () => {
+    const updatedNote = noteUtils.normalizeNote(updater(normalizedNotes[index]));
+    updatedNote.updatedAt = noteUtils.getTimestamp();
+    return noteStore.saveNote(updatedNote).then(() => {
+      const currentIndex = currentNotes.findIndex((note) => note.id === id);
+      if (currentIndex > -1) currentNotes[currentIndex] = updatedNote;
       if (typeof afterUpdate === 'function') afterUpdate();
     });
+  }).catch((error) => {
+    alert(`Could not update note: ${error.message}`);
   });
-}
-
-function scheduleReminder(noteData) {
-  chrome.runtime.sendMessage({
-    type: 'scheduleReminder',
-    noteId: noteData.id,
-    reminderTime: noteData.reminder
-  });
-}
-
-function clearReminder(noteId) {
-  chrome.runtime.sendMessage({
-    type: 'clearReminder',
-    noteId
-  });
-}
-
-function debounce(callback, delay) {
-  let timerId;
-  return () => {
-    clearTimeout(timerId);
-    timerId = setTimeout(callback, delay);
-  };
-}
-
-function escapeHtml(text) {
-  return String(text || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-function linkify(text) {
-  const escapedText = escapeHtml(text);
-  const urlRegex = /(https?:\/\/[^\s<]+)/g;
-  return escapedText.replace(urlRegex, (url) => {
-    return `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`;
-  });
-}
-
-function getNoteHtml(note) {
-  if (note.contentHtml) return note.contentHtml;
-  return linkify(note.content);
-}
-
-function stripHtml(html) {
-  const tmp = document.createElement('div');
-  tmp.innerHTML = html;
-  return tmp.innerText;
-}
-
-function getCountdownText(reminderValue) {
-  if (!reminderValue) return '';
-
-  const targetTime = new Date(reminderValue).getTime();
-  const diff = targetTime - Date.now();
-  if (!Number.isFinite(targetTime)) return '';
-  if (diff <= 0) return 'Due now';
-
-  const mins = Math.floor(diff / 60000);
-  const hrs = Math.floor(mins / 60);
-  const days = Math.floor(hrs / 24);
-
-  if (days > 0) return `${days}d ${hrs % 24}h left`;
-  if (hrs > 0) return `${hrs}h ${mins % 60}m left`;
-  return `${mins}m left`;
-}
-
-function openSafeUrl(url) {
-  window.open(url, '_blank', 'noopener,noreferrer');
 }
 
 function renderTodoCard(note) {
@@ -690,6 +527,10 @@ function renderTodoCard(note) {
     event.dataTransfer.effectAllowed = 'move';
   });
 
+  const grip = document.createElement('div');
+  grip.className = 'todo-card-grip';
+  grip.title = 'Drag to move';
+
   const cardHeader = document.createElement('div');
   cardHeader.className = 'todo-card-header';
   cardHeader.addEventListener('mousedown', (event) => {
@@ -700,7 +541,7 @@ function renderTodoCard(note) {
   reminderBtn.type = 'button';
   reminderBtn.className = `todo-reminder-btn${note.reminder ? ' active' : ''}`;
   reminderBtn.innerText = note.reminder ? 'A!' : 'A';
-  reminderBtn.title = note.reminder ? `Reminder: ${getCountdownText(note.reminder) || note.reminder}` : 'Set reminder';
+  reminderBtn.title = note.reminder ? `Reminder: ${noteUtils.getCountdownText(note.reminder) || note.reminder}` : 'Set reminder';
 
   const reminderPanel = document.createElement('div');
   reminderPanel.className = 'todo-reminder-panel';
@@ -714,7 +555,7 @@ function renderTodoCard(note) {
 
   const reminderText = document.createElement('div');
   reminderText.className = 'todo-reminder-text';
-  reminderText.innerText = getCountdownText(note.reminder);
+  reminderText.innerText = noteUtils.getCountdownText(note.reminder);
 
   const clearReminderBtn = document.createElement('button');
   clearReminderBtn.type = 'button';
@@ -723,7 +564,7 @@ function renderTodoCard(note) {
   clearReminderBtn.disabled = !note.reminder;
 
   const updateReminderState = () => {
-    const text = getCountdownText(note.reminder);
+    const text = noteUtils.getCountdownText(note.reminder);
     reminderText.innerText = text;
     reminderBtn.classList.toggle('active', Boolean(note.reminder));
     reminderBtn.innerText = note.reminder ? 'A!' : 'A';
@@ -742,9 +583,9 @@ function renderTodoCard(note) {
     updateReminderState();
 
     if (note.reminder) {
-      scheduleReminder(note);
+      noteUtils.scheduleReminder(note);
     } else {
-      clearReminder(note.id);
+      noteUtils.clearReminder(note.id);
     }
   };
 
@@ -752,7 +593,7 @@ function renderTodoCard(note) {
     note.reminder = '';
     reminderInput.value = '';
     saveNoteToStorage(note);
-    clearReminder(note.id);
+    noteUtils.clearReminder(note.id);
     updateReminderState();
   };
 
@@ -765,11 +606,14 @@ function renderTodoCard(note) {
   const content = document.createElement('div');
   content.className = 'todo-content';
   content.contentEditable = true;
-  content.innerHTML = getNoteHtml(note);
+  // Explicitly non-draggable so starting a drag gesture inside the text
+  // selects text instead of hijacking the card's native drag-and-drop.
+  // Dragging the card itself is done via the grip bar above.
+  content.draggable = false;
+  content.innerHTML = noteUtils.getNoteHtml(note);
 
-  const saveContent = debounce(() => {
+  const saveContent = noteUtils.debounce(() => {
     note.content = content.innerText;
-    note.contentHtml = content.innerHTML;
     saveNoteToStorage(note);
   }, SAVE_DEBOUNCE_MS);
 
@@ -777,16 +621,20 @@ function renderTodoCard(note) {
     if (event.target.tagName === 'A') {
       event.preventDefault();
       event.stopImmediatePropagation();
-      openSafeUrl(event.target.href);
+      noteUtils.openSafeUrl(event.target.href);
     }
   });
 
   content.addEventListener('input', saveContent);
 
+  content.addEventListener('focus', () => {
+    content.innerText = noteUtils.stripHtml(content.innerHTML);
+  });
+
   content.addEventListener('blur', () => {
     note.content = content.innerText;
-    note.contentHtml = content.innerHTML;
     saveNoteToStorage(note, loadDashboardData);
+    content.innerHTML = noteUtils.linkify(note.content);
   });
 
   const meta = document.createElement('div');
@@ -856,7 +704,7 @@ function renderTodoCard(note) {
   openBtn.onclick = () => {
     let target = note.url;
     if (!target.startsWith('http')) target = `https://${target}`;
-    openSafeUrl(target);
+    noteUtils.openSafeUrl(target);
   };
 
   const deleteBtn = document.createElement('button');
@@ -874,6 +722,7 @@ function renderTodoCard(note) {
   actions.appendChild(openBtn);
   actions.appendChild(deleteBtn);
 
+  card.appendChild(grip);
   card.appendChild(cardHeader);
   card.appendChild(content);
   card.appendChild(meta);
@@ -959,8 +808,7 @@ function openCreateNoteDialog() {
       tabId: tabSelect.value,
       status: statusSelect.value,
       color: colorInput.value,
-      content: editor.innerText,
-      contentHtml: editor.innerHTML
+      content: editor.innerText
     }, (created) => {
       if (created) closeDialog();
     });
@@ -980,28 +828,32 @@ function openCreateNoteDialog() {
 }
 
 function exportAllData() {
-  chrome.storage.sync.get(['notes', 'boardSettings', 'globalSettings', APP_SETTINGS_KEY], (syncData) => {
+  Promise.all([
+    noteStore.loadNotes(),
+    new Promise((resolve) => chrome.storage.sync.get(['boardSettings', 'globalSettings', APP_SETTINGS_KEY], resolve))
+  ]).then(([notes, syncData]) => {
     chrome.storage.local.get(LOCAL_EXPORT_KEYS, (localData) => {
       const payload = {
         schemaVersion: 1,
-        exportedAt: getTimestamp(),
+        exportedAt: noteUtils.getTimestamp(),
         extensionVersion: chrome.runtime.getManifest().version,
         sync: {
-          notes: syncData.notes || [],
+          notes,
           boardSettings: syncData.boardSettings || null,
           globalSettings: syncData.globalSettings || null,
-          appSettings: normalizeAppSettings(syncData[APP_SETTINGS_KEY])
+          appSettings: noteUtils.normalizeAppSettings(syncData[APP_SETTINGS_KEY])
         },
         local: {
           customBgImage: localData.customBgImage || null,
           customBgImageUpdatedAt: localData.customBgImageUpdatedAt || '',
           floatingButtonPosition: localData.floatingButtonPosition || null,
-          edgeReminderBarSettings: localData.edgeReminderBarSettings || null,
-          noteContentHtml: localData[NOTE_HTML_MAP_KEY] || {}
+          edgeReminderBarSettings: localData.edgeReminderBarSettings || null
         }
       };
       downloadJson(payload);
     });
+  }).catch((error) => {
+    alert(`Could not export data: ${error.message}`);
   });
 }
 
@@ -1035,29 +887,40 @@ function mergeImportedData(payload) {
   const importedSync = payload?.sync || {};
   const importedLocal = payload?.local || {};
 
-  chrome.storage.sync.get(['notes', 'boardSettings', 'globalSettings', APP_SETTINGS_KEY], (currentSync) => {
-    const nextNotes = mergeNotesByUpdatedAt(currentSync.notes || [], importedSync.notes || []);
+  Promise.all([
+    noteStore.loadNotes(),
+    new Promise((resolve) => chrome.storage.sync.get(['boardSettings', 'globalSettings', APP_SETTINGS_KEY], resolve))
+  ]).then(([currentNotesInput, currentSync]) => {
+    const nextNotes = mergeNotesByUpdatedAt(currentNotesInput || [], importedSync.notes || []);
     const nextBoardSettings = pickNewerObject(importedSync.boardSettings, currentSync.boardSettings);
     const nextGlobalSettings = pickNewerObject(importedSync.globalSettings, currentSync.globalSettings);
     const nextAppSettings = pickNewerObject(
-      importedSync.appSettings ? normalizeAppSettings(importedSync.appSettings) : null,
-      normalizeAppSettings(currentSync[APP_SETTINGS_KEY])
+      importedSync.appSettings ? noteUtils.normalizeAppSettings(importedSync.appSettings) : null,
+      noteUtils.normalizeAppSettings(currentSync[APP_SETTINGS_KEY])
     );
 
     const syncUpdate = {
-      notes: nextNotes,
       boardSettings: nextBoardSettings || currentSync.boardSettings,
       [APP_SETTINGS_KEY]: nextAppSettings
     };
     if (nextGlobalSettings) syncUpdate.globalSettings = nextGlobalSettings;
 
     chrome.storage.sync.set(syncUpdate, () => {
-      mergeImportedLocalData(importedLocal, () => {
-        loadDashboardData();
-        loadBackgroundSettings();
-        alert('Import complete.');
-      });
+      noteStore.replaceAllNotes(nextNotes)
+        .then(() => {
+          mergeImportedLocalData(importedLocal, () => {
+            loadDashboardData();
+            loadBackgroundSettings();
+            refreshStorageStats();
+            alert('Import complete.');
+          });
+        })
+        .catch((error) => {
+          alert(`Could not import notes: ${error.message}`);
+        });
     });
+  }).catch((error) => {
+    alert(`Could not import data: ${error.message}`);
   });
 }
 
@@ -1090,16 +953,13 @@ function mergeImportedLocalData(importedLocal, afterMerge) {
 
     if (importedLocal.customBgImage && getTimeValue(importedLocal.customBgImageUpdatedAt) > getTimeValue(currentLocal.customBgImageUpdatedAt)) {
       localUpdate.customBgImage = importedLocal.customBgImage;
-      localUpdate.customBgImageUpdatedAt = importedLocal.customBgImageUpdatedAt || getTimestamp();
+      localUpdate.customBgImageUpdatedAt = importedLocal.customBgImageUpdatedAt || noteUtils.getTimestamp();
     }
 
     ['floatingButtonPosition', 'edgeReminderBarSettings'].forEach((key) => {
       const nextValue = pickNewerObject(importedLocal[key], currentLocal[key]);
       if (nextValue) localUpdate[key] = nextValue;
     });
-
-    const mergedHtmlMap = mergeNoteHtmlMaps(currentLocal[NOTE_HTML_MAP_KEY] || {}, importedLocal.noteContentHtml || {});
-    if (Object.keys(mergedHtmlMap).length) localUpdate[NOTE_HTML_MAP_KEY] = mergedHtmlMap;
 
     if (Object.keys(localUpdate).length) {
       chrome.storage.local.set(localUpdate, afterMerge);
@@ -1109,15 +969,26 @@ function mergeImportedLocalData(importedLocal, afterMerge) {
   });
 }
 
-function mergeNoteHtmlMaps(currentMap, importedMap) {
-  const merged = { ...currentMap };
-  Object.entries(importedMap).forEach(([noteId, importedValue]) => {
-    const currentValue = merged[noteId];
-    if (!currentValue || getTimeValue(importedValue?.updatedAt) > getTimeValue(currentValue.updatedAt)) {
-      merged[noteId] = importedValue;
-    }
-  });
-  return merged;
+function refreshStorageStats() {
+  const statsElement = document.getElementById('storage-stats');
+  if (!statsElement) return;
+  statsElement.innerText = 'Loading...';
+  noteStore.getStorageStats()
+    .then((stats) => {
+      const topNotes = stats.noteItems
+        .slice(0, 3)
+        .map((item, index) => `${index + 1}. ${item.bytes} bytes / ${item.contentLength} chars`)
+        .join('\n');
+      statsElement.innerText = [
+        `Total sync: ${stats.totalSyncBytes} bytes / ${chrome.storage.sync.QUOTA_BYTES}`,
+        `Notes: ${stats.noteCount}`,
+        `Largest note: ${stats.largestNoteBytes} bytes / ${stats.largestNoteContentLength} chars`,
+        topNotes ? `Top note sizes:\n${topNotes}` : 'Top note sizes: none'
+      ].join('\n');
+    })
+    .catch((error) => {
+      statsElement.innerText = `Could not read storage stats: ${error.message}`;
+    });
 }
 
 function setupSettingsUI() {
@@ -1137,8 +1008,6 @@ function setupSettingsUI() {
   const inputFile = document.getElementById('bg-file-input');
   const inputImport = document.getElementById('import-file-input');
   const inputAddButtonEnabled = document.getElementById('add-button-enabled-input');
-  const inputCharacterEnabled = document.getElementById('character-enabled-input');
-  const inputCharacterCount = document.getElementById('character-count-input');
   const settingsPanel = document.getElementById('board-settings-panel');
 
   btnAddNote.onclick = () => {
@@ -1156,12 +1025,11 @@ function setupSettingsUI() {
     modal.style.display = 'block';
     overlay.style.display = 'block';
     chrome.storage.sync.get(['globalSettings', APP_SETTINGS_KEY], (res) => {
-      const appSettings = normalizeAppSettings(res[APP_SETTINGS_KEY]);
+      const appSettings = noteUtils.normalizeAppSettings(res[APP_SETTINGS_KEY]);
       inputUrl.value = res.globalSettings?.bgUrl || '';
       inputAddButtonEnabled.checked = appSettings.addButtonEnabled;
-      inputCharacterEnabled.checked = appSettings.charactersEnabled;
-      inputCharacterCount.value = String(appSettings.characterCount);
     });
+    refreshStorageStats();
     inputFile.value = '';
     inputImport.value = '';
   };
@@ -1186,7 +1054,7 @@ function setupSettingsUI() {
       const base64String = readerEvent.target.result;
       chrome.storage.local.set({
         customBgImage: base64String,
-        customBgImageUpdatedAt: getTimestamp()
+        customBgImageUpdatedAt: noteUtils.getTimestamp()
       }, () => {
         applyBackground(base64String);
         closeModal();
@@ -1203,7 +1071,7 @@ function setupSettingsUI() {
     }
 
     chrome.storage.local.remove(['customBgImage'], () => {
-      chrome.storage.sync.set({ globalSettings: { bgUrl: url, updatedAt: getTimestamp() } });
+      chrome.storage.sync.set({ globalSettings: { bgUrl: url, updatedAt: noteUtils.getTimestamp() } });
       applyBackground(url);
       closeModal();
     });
@@ -1220,26 +1088,10 @@ function setupSettingsUI() {
     chrome.storage.sync.set({
       [APP_SETTINGS_KEY]: {
         addButtonEnabled: inputAddButtonEnabled.checked,
-        charactersEnabled: inputCharacterEnabled.checked,
-        characterCount: normalizeCharacterCount(inputCharacterCount.value),
-        updatedAt: getTimestamp()
+        updatedAt: noteUtils.getTimestamp()
       }
     });
   };
-
-  const saveCharacterSettings = () => {
-    chrome.storage.sync.set({
-      [APP_SETTINGS_KEY]: {
-        addButtonEnabled: inputAddButtonEnabled.checked,
-        charactersEnabled: inputCharacterEnabled.checked,
-        characterCount: normalizeCharacterCount(inputCharacterCount.value),
-        updatedAt: getTimestamp()
-      }
-    });
-  };
-
-  inputCharacterEnabled.onchange = saveCharacterSettings;
-  inputCharacterCount.onchange = saveCharacterSettings;
 
   btnExport.onclick = exportAllData;
 
